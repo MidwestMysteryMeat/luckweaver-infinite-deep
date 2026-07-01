@@ -102,6 +102,37 @@ mean better everything: faster mining, stronger potions/meals/spells, finer gear
 enchants, higher attack. Character level-ups grant **skill points**; spend them in the
 Disciplines panel (**K**) — each point is +2 effective levels in one discipline.
 
+### Traps & Hazards (procedural on floors, walls, and doors)
+- **Tripwires** (explosive / acid-flood / lava-vent), **blast glyphs**, **warp glyphs**
+  (teleport you across the floor), **spike blocks**, **spider webs** (slow to a crawl),
+  **dart holes** in walls (sting + sleep), **trapped chests** (gas eruptions — they look
+  identical to real ones), **trapped doors** (poison vents from the frame), and **pressure
+  plates** that arm old-school **crushers**: a plane of spikes grinds down from the ceiling
+  or closes in from a wall, sweeping the room. Trap density scales with depth; every trap is
+  a block — spot it and mine it to disarm.
+- **Gases:** poison (damage), sleep (drops you where you stand), **inversion gas** (flips
+  your vision upside down), and smoke — all spread and dissipate through the fluid sim.
+
+### Bows, Sneak Attacks, Bombs
+- **Bows & arrows** (smithable): a Shoot action in combat, and aimed shots in the world that
+  open fights at range. Strike from beyond 8 blocks — or from inside **smoke** — for a
+  **sneak attack**: a free opening strike with doubled dice before initiative.
+- **Alchemy bombs:** sootcaps brew **Smoke Bombs** (blind stalkers, set up sneaks), toxic
+  brews throw as **Gas Flasks** (poison clouds), volatile as **Blast Flasks** (explosions
+  that leave live acid). Spell counterparts: **Rune of Veils** (smoke/sleep/poison clouds by
+  essence) and **Rune of Snares** (place your own blast glyph).
+
+### Oozes
+D&D-style slimes: the **Gelatinous Cube** (engulfs you in caustic jelly), the **Black
+Pudding** (its acid pits your armor, shredding AC), and the **Ochre Jelly** (splits into a
+lesser jelly when cut below half).
+
+### Drop-in / drop-out progression
+Your character is saved **locally** and travels with you: join any friend's lobby and your
+level, disciplines, gear, and gold come along (pick a different class and you start that
+class fresh). Difficulty and loot scale live with **party size and average level** on top of
+the adaptive threat system.
+
 ### Camps & Cooking
 - Place a **campfire**: it lights the room, becomes a **respawn point**, and slowly heals
   anyone resting within its glow.
