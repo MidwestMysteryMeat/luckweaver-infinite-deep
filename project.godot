@@ -1,0 +1,31 @@
+; Engine configuration file.
+; Luck & Loot: Infinite Gambit — Godot 4.3+
+
+config_version=5
+
+[application]
+
+config/name="Luckweaver: Infinite Deep"
+config/description="Turn-based d20 fantasy voxel dungeon crawler. 1-4 player Steam co-op."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3")
+
+[autoload]
+
+Events="*res://autoload/events.gd"
+Db="*res://autoload/db.gd"
+SteamMgr="*res://autoload/steam_mgr.gd"
+Net="*res://autoload/net.gd"
+Game="*res://autoload/game.gd"
+SaveMgr="*res://autoload/save_mgr.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="disabled"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+anti_aliasing/quality/msaa_3d=2

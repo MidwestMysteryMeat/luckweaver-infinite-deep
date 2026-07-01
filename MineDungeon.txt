@@ -1,0 +1,92 @@
+Create a complete End-to-End 3D Open-World Procedural Dungeon Game with the following exact specifications:
+Game Title: "Luck & Loot: Infinite Gambit" (or suggest a better one)
+Genre: Turn-based Loot RPG + Gambling-as-Combat + Voxel Destructible Procedural Dungeon Crawler with deep crafting systems and 4-player co-op / solo support.
+Core Fantasy: Gambling D&D meets Minecraft. Players are "Luckweavers" — adventurers who bet their lives, souls, and luck in high-stakes games. The dungeon is fully destructible voxel terrain where spells and alchemy directly reshape the world.
+Visual & Technical Style
+
+Stylized dark fantasy / casino-gothic aesthetic with glowing runes, floating dice, neon cards, and voxel blocks.
+Voxel-style destruction & modification system (Minecraft-inspired):
+Walls, floors, ceilings, doors, and props are fully destructible and modifiable.
+Spells and alchemy can create, destroy, transmute, or reshape terrain in dramatic ways.
+
+
+Core Loop
+
+Explore and reshape a procedurally generated voxel dungeon floor using tools, spells, alchemy, and environmental gambling.
+Trigger turn-based gambling combat anywhere.
+Use Spell Making and Alchemy to craft powerful effects that influence both combat and the world.
+Craft new skills, mutate, loot, and descend deeper into infinite floors.
+
+Key Systems
+Gambling-as-Combat (Core)
+
+Poker, Dice Runes, Blackjack, Roulette, Slot Gauntlets, etc.
+Environmental Gambits enhanced by player-shaped terrain.
+
+Voxel Destruction & World Interaction
+
+Free mining, tunneling, and structural collapse.
+Spells and alchemy directly affect the voxel world (explode walls, freeze water into bridges, transmute stone to gold ore, grow magical vines, create lava flows, etc.).
+
+Spell Making System
+
+Deep spellcrafting workbench where players combine runes, gambling cards, and harvested essences.
+Create custom spells that can be used in gambling rounds or in the world.
+Examples: “Jackpot Explosion” (area destruction + loot rain), “Fortune Warp” (teleport + terrain reshape), “Devil’s Contract” (temporary power at a risk).
+Spells have rarity tiers and can be mutated.
+
+Alchemy System
+
+Potion brewing and elixir crafting using dungeon ingredients and alchemical gambling winnings.
+Potions affect Luck, mutations, stats, and the world (e.g. “Volatile Solvent” – melts blocks in a radius, “Luck Elixir” – temporary odds manipulation, “Stoneblood Potion” – turns your body into temporary indestructible voxel material).
+Advanced alchemy recipes can create permanent world changes or powerful throwables.
+
+Skill Crafting System
+
+Combine existing skills, spells, and alchemical components to forge entirely new abilities.
+Example: Merge a mining skill with a gambling ability → “Loaded Dice Drill” (mine faster and gain luck bonuses from successful digs).
+Deep skill tree with crafting branches.
+
+Progression & RPG
+
+Classes (Cardsharp Rogue, Rune Dealer, High Roller Paladin, Chaos Croupier, Soul Banker, Lucky Bard, etc.)
+Leveling, mutations, rarities (Common → Mythic → Cursed)
+Loot boxes, deep inventory, shops, NPCs
+All systems interconnect: gambling wins provide rare reagents for alchemy/spell making, crafted spells enhance gambling, alchemy helps with world destruction/crafting.
+
+Dungeon & World
+
+Infinite procedural voxel dungeon floors with increasing complexity.
+Players can permanently (or semi-permanently) reshape levels using spells and alchemy.
+Hidden alchemical labs, rune forges, and ancient gambling vaults.
+Persistent town hub that players can upgrade and customize with crafted spells/alchemy.
+
+Multiplayer (1-4 players)
+
+Seamless co-op with shared world modification.
+Cooperative spell combos, joint alchemy sessions, and massive group gambits.
+Shared loot and crafting resources with fair distribution.
+
+Additional Features
+
+Full save system (including player modifications to the world where appropriate)
+Satisfying feedback for destruction, crafting, and big gambling wins
+Mining/harvesting that feeds alchemy and spell making
+Boss fights as multi-phase gambling tournaments with heavy environmental interaction
+
+Technical Requirements:
+
+Unity (preferred) or Godot 4.
+Efficient voxel system supporting destruction, creation, and transmutation.
+Clean, modular, well-commented code architecture.
+Good performance with dynamic terrain changes.
+
+Generate the complete project structure. Prioritize:
+
+Voxel terrain system with destruction + spell/alchemy modification
+Gambling combat framework
+Spell Making, Alchemy, and Skill Crafting systems
+Procedural generation, player controller, inventory, and co-op
+Then all remaining features.
+
+First, provide the full updated Game Design Document summary + recommended folder structure and key tech decisions for voxel + crafting systems, then begin coding the foundational systems.

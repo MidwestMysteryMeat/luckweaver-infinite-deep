@@ -1,0 +1,11 @@
+# Godot
+.godot/
+*.import
+export_presets.cfg
+
+# GodotSteam binaries (install per README; don't commit)
+addons/
+
+# OS
+Thumbs.db
+.DS_Store
