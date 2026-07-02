@@ -7,6 +7,7 @@ var voxel: VoxelWorld
 var players_node: Node3D
 var enemies_node: Node3D
 var pickups_node: Node3D
+var _env: Environment
 
 
 func _ready() -> void:
@@ -28,19 +29,34 @@ func _ready() -> void:
 
 
 func _build_environment() -> void:
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.05, 0.03, 0.09)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.4, 0.35, 0.5)
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.12, 0.07, 0.18)
-	env.fog_density = 0.025
-	env.glow_enabled = true
-	env.glow_intensity = 0.4
+	_env = Environment.new()
+	_env.background_mode = Environment.BG_COLOR
+	_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	_env.fog_enabled = true
+	_env.glow_enabled = true
+	_env.glow_intensity = 0.4
 	var we := WorldEnvironment.new()
-	we.environment = env
+	we.environment = _env
 	add_child(we)
+	_apply_daylight()
+
+
+## Day/night: sky, fog, ambient, and the voxel material's tint all follow the
+## world clock (blocks are unshaded, so tinting the shared material IS the
+## sunset). Caves barely notice; the surface swings from noon to starlight.
+func _process(_delta: float) -> void:
+	_apply_daylight()
+
+
+func _apply_daylight() -> void:
+	var dl := Game.daylight()
+	_env.background_color = Color(0.012, 0.014, 0.055).lerp(Color(0.42, 0.62, 0.92), dl)
+	_env.fog_light_color = Color(0.03, 0.03, 0.09).lerp(Color(0.55, 0.62, 0.8), dl)
+	_env.ambient_light_color = Color(0.2, 0.19, 0.3).lerp(Color(0.55, 0.55, 0.62), dl)
+	_env.fog_density = lerpf(0.03, 0.012, dl)
+	var tint := Color(0.34, 0.37, 0.55).lerp(Color(1, 1, 1), dl)
+	Blocks.material().albedo_color = tint
+	Blocks.material_translucent().albedo_color = tint
 
 
 # ---------------------------------------------------------------- players
@@ -135,6 +151,25 @@ func spawn_hit_fx(eid: int, dmg: int, txt: String) -> void:
 		var tw2 := n.create_tween()
 		tw2.tween_property(n, "scale", base_scale * 1.18, 0.06)
 		tw2.tween_property(n, "scale", base_scale, 0.12)
+		# Impact spark: an additive burst at the wound — gold for crits.
+		var spark := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.16
+		sm.height = 0.32
+		spark.mesh = sm
+		var smat := StandardMaterial3D.new()
+		smat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		smat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		smat.albedo_color = Color(1.0, 0.85, 0.25, 0.9) if txt == "CRIT!" \
+			else Color(1.0, 0.3, 0.2, 0.85)
+		spark.material_override = smat
+		spark.position = Vector3(randf_range(-0.2, 0.2), 1.0, randf_range(-0.2, 0.2))
+		n.add_child(spark)
+		var tw3 := spark.create_tween()
+		tw3.set_parallel(true)
+		tw3.tween_property(spark, "scale", Vector3.ONE * (4.0 if txt == "CRIT!" else 2.4), 0.18)
+		tw3.tween_property(smat, "albedo_color:a", 0.0, 0.2)
+		tw3.chain().tween_callback(spark.queue_free)
 	var label := Label3D.new()
 	label.text = txt if dmg <= 0 else ("%d %s" % [dmg, txt]).strip_edges()
 	label.font_size = 64 if txt == "CRIT!" else 44

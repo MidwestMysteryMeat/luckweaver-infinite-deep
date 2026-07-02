@@ -25,6 +25,12 @@ var known_ac := 10
 var est_hp := 10
 var tamed := false
 var owner_pid := 0
+var _knock := Vector3.ZERO  # server-side impulse from the last hit taken
+
+
+## Server: shove from a landed strike; applied on the next AI tick.
+func knock(v: Vector3) -> void:
+	_knock += v
 
 
 func setup(e: Dictionary) -> void:
@@ -228,6 +234,9 @@ func tick_ai(players: Dictionary, world) -> void:
 	velocity.y -= GRAVITY * delta
 	if is_on_wall() and is_on_floor():
 		velocity.y = 7.0
+	if _knock.length_squared() > 0.01:  # hit reaction: reel back
+		velocity += _knock
+		_knock = Vector3.ZERO
 	move_and_slide()
 
 

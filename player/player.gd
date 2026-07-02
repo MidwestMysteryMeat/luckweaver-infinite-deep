@@ -153,6 +153,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			var node = a.get("node")
 			if node != null and node.disp == "hostile":
 				Game.request_melee(int(a.eid))
+			AudioMgr.sfx("sfx_swing", -10.0)
 		_swing_anim()
 	# Dodge: a quick burst-step in your movement direction (Ctrl).
 	if event.is_action_pressed("dodge") and Time.get_ticks_msec() > _dodge_cd:
@@ -171,6 +172,23 @@ func _swing_anim() -> void:
 	var tw := _hand.create_tween()
 	tw.tween_property(_hand, "rotation_degrees", Vector3(-70, 25, 0), 0.08)
 	tw.tween_property(_hand, "rotation_degrees", Vector3.ZERO, 0.18)
+
+
+# Combat game-feel: FOV kick when your hit lands, camera shake when you're hit.
+var _shake := 0.0
+
+
+func strike_punch(crit: bool) -> void:
+	if _cam == null:
+		return
+	_cam.fov = 84.0 if crit else 82.0
+	var tw := _cam.create_tween()
+	tw.tween_property(_cam, "fov", 80.0, 0.16)
+	_shake = maxf(_shake, 0.1 if crit else 0.04)
+
+
+func hurt_kick(frac: float) -> void:
+	_shake = maxf(_shake, clampf(0.12 + frac * 0.8, 0.12, 0.5))
 
 
 var _held: Node3D = null
@@ -215,6 +233,12 @@ func _physics_process(delta: float) -> void:
 					-PI / 2 + 0.05, PI / 2 - 0.05)
 		_local_move(delta)
 		_local_mine(delta)
+		if _shake > 0.001:
+			_shake = maxf(_shake - delta * 0.8, 0.0)
+			_head.position = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) \
+				* _shake * 0.12 + Vector3(0, 1.5, 0)
+		elif _head.position != Vector3(0, 1.5, 0):
+			_head.position = Vector3(0, 1.5, 0)
 		_net_accum += delta
 		if _net_accum >= NET_RATE and multiplayer.multiplayer_peer != null:
 			_net_accum = 0.0
@@ -225,6 +249,11 @@ func _physics_process(delta: float) -> void:
 
 
 func _local_move(delta: float) -> void:
+	# Never simulate on terrain that hasn't built its collision yet — sprinting
+	# ahead of the streamer (or teleporting) must not drop you through the map.
+	if Game.voxel != null and not Game.voxel.ready_at(global_position):
+		velocity = Vector3.ZERO
+		return
 	# Fluid physics: liquids slow you and let you swim; lava is like tar.
 	var body_block: int = Game.voxel.get_block_v(Vector3i((global_position + Vector3(0, 0.8, 0)).floor())) \
 		if Game.voxel != null else Blocks.AIR
@@ -292,8 +321,11 @@ func _local_move(delta: float) -> void:
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	move_and_slide()
-	if global_position.y < -10:  # fell out somehow
-		teleport_to(Game.gen_info.get("spawn", Vector3(48, 6, 48)))
+	if global_position.y < -4:  # fell out somehow — pop back to the surface here
+		var sx := int(floor(global_position.x))
+		var sz := int(floor(global_position.z))
+		teleport_to(Vector3(float(sx) + 0.5,
+			float(WorldGen.surface_y(Game.run_seed, sx, sz)) + 1.6, float(sz) + 0.5))
 
 
 @rpc("authority", "unreliable_ordered")

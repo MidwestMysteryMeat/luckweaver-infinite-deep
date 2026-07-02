@@ -21,6 +21,15 @@ var _hotbar: HBoxContainer
 var _slots: Array = []
 var _prompt_hint := ""
 var _tutorial: Label
+var _hurt_rect: ColorRect
+
+
+func _hurt_flash(frac: float) -> void:
+	if not is_inside_tree():
+		return
+	_hurt_rect.color.a = clampf(0.15 + frac * 0.5, 0.15, 0.55)
+	var tw := create_tween()
+	tw.tween_property(_hurt_rect, "color:a", 0.0, 0.4)
 
 
 func _init(main_ref) -> void:
@@ -124,15 +133,24 @@ func _init(main_ref) -> void:
 	chatv.add_child(_chat_edit)
 	add_child(chatv)
 
+	# --- hurt flash (full-screen red vignette pulse)
+	_hurt_rect = ColorRect.new()
+	_hurt_rect.color = Color(0.8, 0.05, 0.05, 0.0)
+	_hurt_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hurt_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hurt_rect)
+	move_child(_hurt_rect, 0)  # behind everything else on the HUD
+
 	Events.notify.connect(_toast)
 	Events.chat_line.connect(_chat)
 	Events.my_record_changed.connect(_refresh_stats)
+	Events.player_hurt.connect(_hurt_flash)
 	Events.floor_loaded.connect(func(f): _floor.text = _floor_name(f))
 	# The first floor_loaded fires before the HUD exists — backfill it.
 	_floor.text = _floor_name(Game.floor_num)
 
 
-## Depth readout: the infinite world scales by how deep you've dug.
+## Depth readout: biome up top, band depth below — plus the time of day.
 func _floor_name(_f: int) -> String:
 	var p = main.local_player()
 	if p == null:
@@ -140,7 +158,9 @@ func _floor_name(_f: int) -> String:
 	var y := int(p.global_position.y)
 	var band := Db.band_at(p.global_position.y)
 	if band == 0:
-		return "🏛 Surface — the Gilded Refuge (y %d)" % y
+		var biome := WorldGen.biome_name(Game.run_seed,
+			int(p.global_position.x), int(p.global_position.z))
+		return "%s %s (y %d)" % ["☾" if Game.is_night() else "☀", biome, y]
 	return "⛏ The Deep — band %d (y %d)" % [band, y]
 
 
@@ -188,11 +208,11 @@ func _refresh_stats() -> void:
 		for it in inv:
 			if it != null and it.id in ["stone", "brick", "dirt"]:
 				mined = true
-		var step := "Hold LMB on a wall to MINE — then press H for the handbook"
+		var step := "Hold LMB on a tree or dirt to MINE — then press H for the handbook"
 		if mined and int(rec.xp) == 0:
-			step = "Visit the ANVIL / CAULDRON (north wall) — then take the south PORTAL down"
+			step = "Explore: find a VILLAGE (waystone + benches) — and DIG DOWN to descend"
 		elif int(rec.xp) > 0:
-			step = "You've drawn blood. The portal south leads deeper — good luck"
+			step = "Blood drawn! Learn SPELLS at a village Rune Forge — deeper = deadlier"
 		_prompt_hint = "✦ TUTORIAL: %s" % step
 	else:
 		_prompt_hint = ""

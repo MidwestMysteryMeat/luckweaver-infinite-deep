@@ -52,6 +52,28 @@ var _crush_accum := 0.0
 var _floor_ready := {}   # pid -> true (barrier while loading a floor)
 var _descending := false
 var _tick := 0.0
+var _villages_seen := {} # "x,z" anchor keys already discovered/registered (server)
+
+## Day/night: a full cycle every DAY_LEN seconds. The server owns the clock
+## and rebroadcasts it; every peer advances locally between syncs.
+const DAY_LEN := 1200.0
+var world_time := 240.0  # start late morning
+var _time_accum := 0.0
+
+
+## 0..1 sunlight right now (1 = noon, 0.1 = deep night).
+func daylight() -> float:
+	var phase := fposmod(world_time / DAY_LEN, 1.0)
+	return clampf(sin(phase * TAU) * 1.15 + 0.42, 0.1, 1.0)
+
+
+func is_night() -> bool:
+	return daylight() < 0.32
+
+
+@rpc("authority", "unreliable")
+func cl_time(t: float) -> void:
+	world_time = t
 
 # ---- scene refs (registered by scenes/world.gd) ----
 var world = null         # LLWorld
@@ -468,6 +490,7 @@ func request_start_run() -> void:
 		loot_rule = String(pending_load.get("loot_rule", loot_rule))
 		town_chests = pending_load.get("town_chests", {})
 		town_pop = int(pending_load.get("town_pop", 0))
+		world_time = float(pending_load.get("world_time", 240.0))
 		var saved_quests: Dictionary = pending_load.get("quests", {})
 		for pid in players:
 			if saved_quests.has(players[pid].name):
@@ -517,6 +540,12 @@ func cl_begin_run(seed_v: int, precords: Dictionary, _fnum: int, ops: Array, _to
 
 ## World-space anchor: everyone spawns on the town plaza at the origin.
 func spawn_point() -> Vector3:
+	# First dry land walking east from the origin — (0,0) might be mid-ocean.
+	# Deterministic, so every peer computes the identical spawn.
+	for dx in range(0, 2000, 8):
+		var s := WorldGen.surface_y(run_seed, dx, 0)
+		if s > WorldGen.WATER_LEVEL:
+			return Vector3(float(dx) + 0.5, float(s) + 1.6, 0.5)
 	return Vector3(0.5, float(WorldGen.surface_y(run_seed, 0, 0)) + 1.6, 0.5)
 
 
@@ -534,14 +563,18 @@ func world_registered(w, vw: VoxelWorld) -> void:
 
 ## Infinite world boot: seed the generator, replay every edit ever made (this
 ## regenerates exactly the columns those edits touched), stream in the spawn
-## area, and report ready.
+## area, and report ready. The mesh build is SLICED across frames — one long
+## synchronous build starves ENet and the connection times out on tall worlds;
+## players can't fall through meanwhile (ready_at freezes them until built).
 func _local_load_floor() -> void:
 	voxel.world_seed = run_seed
 	WorldGen.setup(run_seed)
 	for op in edit_log:
 		voxel.apply_op(op)
 	voxel.stream_around([spawn_point()])
-	voxel.flush_all()
+	while not voxel.dirty.is_empty():
+		voxel.flush_dirty(24)
+		await get_tree().process_frame
 	gen_info = {"spawn": spawn_point()}
 	Events.floor_loaded.emit(0)
 	if is_server():
@@ -578,45 +611,31 @@ func _all_ready_consumed() -> bool:
 
 
 func _server_populate_floor() -> void:
-	# Spawn every player around the town plaza; the world spawner handles
-	# mobs from here on — no floors, no portals, just depth.
+	# Spawn every player in the wild; villages register themselves as they're
+	# discovered, and the world spawner handles mobs — no floors, just depth.
 	var base: Vector3 = gen_info.spawn
 	var i := 0
 	for pid in players:
 		var pos := base + Vector3((i % 2) * 1.2, 0, (i / 2) * 1.2)
 		rpc("cl_spawn_player", pid, pos)
 		i += 1
-	_register_town_features()
-	rpc("cl_notify", "Welcome to the Gilded Refuge. The Deep is under your feet — dig.")
+	_restore_world_state()
+	rpc("cl_notify", "You wake in %s. Villages dot the wilds — and the Deep is under your feet."
+		% WorldGen.biome_name(run_seed, 0, 0))
 	return
 
 
-## The town's fixed furniture is part of deterministic gen, not the edit log —
-## register it (camps, crops, the waystone) and seed the plaza's citizens.
-func _register_town_features() -> void:
+## Session bootstrap: persisted chests come back, pets rejoin their owners.
+## Village furniture registers on DISCOVERY (see _server_discover_villages).
+func _restore_world_state() -> void:
 	camps = {}
 	crops = {}
 	waystones = {}
-	var feats := WorldGen.town_features()
-	for p in feats:
-		var v: Vector3i = p
-		var key := "%d,%d,%d" % [v.x, v.y, v.z]
-		match int(feats[p]):
-			Blocks.CAMPFIRE:
-				camps[key] = Vector3(v) + Vector3(0.5, 0.5, 0.5)
-			Blocks.CROP_1, Blocks.CROP_2:
-				crops[key] = v
-			Blocks.WAYSTONE:
-				waystones[key] = {"pos": Vector3(v) + Vector3(0, 1, 0), "name": "Town Waystone"}
+	_villages_seen = {}
 	for ck in town_chests:
 		chest_store[ck] = town_chests[ck]
 	rpc("cl_waystones", waystones)
-	# Citizens, recruits, a hog by the pond — and pets rejoining their owners.
 	var base: Vector3 = gen_info.spawn
-	for j in range(3 + mini(town_pop, 8)):
-		_server_spawn_enemy("refuge_citizen" if j < 3 else "villager",
-			base + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10)))
-	_server_spawn_enemy("gloom_hog", base + Vector3(9, 0, 6))
 	for pet in _carry_pets:
 		_server_spawn_enemy(String(pet.type), base + Vector3(randf_range(-2, 2), 0.5, randf_range(-2, 2)))
 		var new_eid := _next_eid - 1
@@ -625,6 +644,62 @@ func _register_town_features() -> void:
 		enemies[new_eid].name = String(pet.name)
 		rpc("cl_tame", new_eid, String(pet.name), int(pet.owner))
 	_carry_pets = []
+
+
+## Server: when a player first comes near a village, register its furniture
+## (camps, crops, waystone) and wake its folk — friendly or otherwise.
+func _server_discover_villages() -> void:
+	for pid in players:
+		var p = world.get_player(pid)
+		if p == null or Db.band_at(p.global_position.y) != 0:
+			continue
+		for v in WorldGen.villages_near(run_seed, p.global_position, 72.0):
+			var a: Vector2i = v.anchor
+			var vkey := "%d,%d" % [a.x, a.y]
+			if _villages_seen.has(vkey):
+				continue
+			_villages_seen[vkey] = true
+			_register_village(v)
+
+
+func _register_village(v: Dictionary) -> void:
+	var a: Vector2i = v.anchor
+	var g: int = v.ground
+	var variant := String(v.variant)
+	var vname: String = {"allied": "an ALLIED village", "cozy": "a COZY hamlet",
+		"hostile": "a BANDIT camp", "ghost": "a GHOST town"}[variant]
+	var feats := WorldGen.village_features(run_seed, v)
+	for p in feats:
+		var c: Vector3i = p
+		var key := "%d,%d,%d" % [c.x, c.y, c.z]
+		match int(feats[p]):
+			Blocks.CAMPFIRE:
+				camps[key] = Vector3(c) + Vector3(0.5, 0.5, 0.5)
+			Blocks.CROP_1, Blocks.CROP_2:
+				crops[key] = c
+			Blocks.WAYSTONE:
+				waystones[key] = {"pos": Vector3(c) + Vector3(0, 1, 0),
+					"name": "%s Village (%d, %d)" % [variant.capitalize(), a.x, a.y]}
+	rpc("cl_waystones", waystones)
+	rpc("cl_notify", "You've found %s!" % vname)
+	# Populate by disposition.
+	var center := Vector3(float(a.x) + 0.5, float(g) + 1.5, float(a.y) + 0.5)
+	var folk: Array = []
+	match variant:
+		"allied":
+			folk = ["refuge_citizen", "refuge_citizen", "refuge_citizen", "villager",
+				"town_guardian", "gloom_hog"]
+			for j in range(mini(town_pop, 6)):
+				folk.append("villager")
+		"cozy":
+			folk = ["refuge_citizen", "refuge_citizen", "villager"]
+		"hostile":
+			folk = ["bandit", "bandit", "bandit", "bandit"]
+		"ghost":
+			folk = ["gloom_ghost", "gloom_ghost", "tomb_howler"]
+	for f in folk:
+		_server_spawn_enemy(String(f),
+			center + Vector3(randf_range(-9, 9), 0, randf_range(-9, 9)))
 
 
 func _spawn_one_late(pid: int) -> void:
@@ -673,6 +748,8 @@ var town_pop := 0            # villagers recruited to the Refuge (persisted)
 var _spawner_accum := 0.0
 
 func _server_tick_spawner() -> void:
+	_server_discover_villages()
+	var night := is_night()
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	for pid in players:
@@ -691,7 +768,8 @@ func _server_tick_spawner() -> void:
 			if String(e.get("disp", "hostile")) == "hostile" \
 					and Vector3(e.pos).distance_to(p.global_position) < 48.0:
 				nearby += 1
-		var want: int = (1 if band == 0 else 3 + band) + int(party().n) / 2
+		# Surface is calm by day, dangerous after dark (Minecraft rules).
+		var want: int = ((3 if night else 1) if band == 0 else 3 + band) + int(party().n) / 2
 		if nearby >= want:
 			continue
 		var pos := _find_spawn_spot(p.global_position, rng)
@@ -704,7 +782,7 @@ func _server_tick_spawner() -> void:
 			var at := Db.pick_ambient_type(rng, maxi(band, 1))
 			if at != "":
 				_server_spawn_enemy(at, pos)
-		elif band > 0 or rng.randf() < 0.25:
+		elif band > 0 or (night and rng.randf() < 0.65) or rng.randf() < 0.1:
 			_server_spawn_enemy(Db.pick_enemy_type(rng, maxi(band, 1), threat), pos)
 	# Despawn strays far from everyone (never pets).
 	for eid in enemies.keys():
@@ -1547,6 +1625,15 @@ func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
 		dmg = int(dmg * 1.5)
 	e.hp = int(e.hp) - dmg
 	rpc("cl_hit_fx", eid, dmg, "CRIT!" if crit else "")
+	send_to(pid, "cl_strike_punch", [crit])
+	# Knockback: landed hits shove the mob back (bosses hold their ground).
+	var en = world.get_enemy(eid) if world != null else null
+	var pn = world.get_player(pid) if world != null else null
+	if en != null and pn != null and not bool(e.get("boss", false)):
+		var kdir: Vector3 = en.global_position - pn.global_position
+		kdir.y = 0.0
+		if kdir.length() > 0.05:
+			en.knock(kdir.normalized() * (2.5 + minf(float(dmg) * 0.12, 2.5)) + Vector3.UP * 2.5)
 	award_prof(pid, "combat", 1)
 	_sync_player(pid)
 	# Boss phases: rage steps at 2/3 and 1/3 HP.
@@ -1582,6 +1669,22 @@ func _enemy_status(e: Dictionary, kind: String, turns: int) -> void:
 func cl_hit_fx(eid: int, dmg: int, txt: String) -> void:
 	if world != null:
 		world.spawn_hit_fx(eid, dmg, txt)
+
+
+## Game-feel: FOV kick on YOUR landed hit; camera shake + red flash when hurt.
+@rpc("authority", "call_local", "unreliable")
+func cl_strike_punch(crit: bool) -> void:
+	var p = world.get_player(multiplayer.get_unique_id()) if world != null else null
+	if p != null:
+		p.strike_punch(crit)
+
+
+@rpc("authority", "call_local", "unreliable")
+func cl_hurt_fx(frac: float) -> void:
+	var p = world.get_player(multiplayer.get_unique_id()) if world != null else null
+	if p != null:
+		p.hurt_kick(frac)
+	Events.player_hurt.emit(frac)
 
 
 ## One enemy swing at a player: d20 + atk vs the player's AC, plus specials.
@@ -1888,6 +1991,12 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 	if not rec.is_empty():
 		grant_xp(by_pid, int(e.get("xp", 30)))
 		award_prof(by_pid, "combat", maxi(2, int(e.get("xp", 20)) / 10))
+		# Thieves cough up everything they snatched (cave imps, coin bats...).
+		var stolen := int(e.get("stolen", 0))
+		if stolen > 0:
+			rec.gold = int(rec.gold) + stolen
+			send_to(by_pid, "cl_notify", ["You recover %d stolen gold from %s!" % [stolen, e.name]])
+			_sync_player(by_pid)
 		# Quest progress: kill contracts.
 		var q: Dictionary = quests.get(by_pid, {})
 		if not q.is_empty() and q.type == "kill" and String(q.target) == String(e.type):
@@ -2059,6 +2168,7 @@ func hurt_player(pid: int, dmg: int, why: String) -> void:
 			send_to(pid, "cl_notify", ["Stoneblood shrugs it off."])
 			return
 	rec.hp -= dmg
+	send_to(pid, "cl_hurt_fx", [clampf(float(dmg) / float(rec.max_hp), 0.0, 1.0)])
 	# Heavy hits can wound a body part: head (-luck), arms (-attack),
 	# legs (slower), body (-AC). Healing cures (see EffectExec / Cooking).
 	if dmg >= int(rec.max_hp) / 4 and randf() < 0.35:
@@ -2211,6 +2321,13 @@ func cl_enemy_positions(posmap: Dictionary) -> void:
 
 
 func _process(delta: float) -> void:
+	if in_run:
+		world_time += delta
+		if is_server() and multiplayer.multiplayer_peer != null:
+			_time_accum += delta
+			if _time_accum >= 7.0:
+				_time_accum = 0.0
+				rpc("cl_time", world_time)
 	if not in_run or not is_server() or world == null:
 		return
 	# Fluid simulation: server metronome; each beat is an op in the log, so
@@ -2734,6 +2851,7 @@ func save_now() -> void:
 		"town_chests": chest_store,
 		"quests": _quests_by_name(),
 		"town_pop": town_pop,
+		"world_time": world_time,
 	})
 
 
@@ -2748,7 +2866,7 @@ func quest_completed(pid: int, giver_type: String) -> void:
 		[int(rec.rep), mini(int(rec.rep) * 5, 25)]])
 	if giver_type == "villager" and town_pop < 8 and randf() < 0.35:
 		town_pop += 1
-		rpc("cl_notify", "Word spreads — a villager packs up to settle in the Gilded Refuge!")
+		rpc("cl_notify", "Word spreads — another villager will settle in allied villages you find!")
 	_sync_player(pid)
 
 

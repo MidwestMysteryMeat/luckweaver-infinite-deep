@@ -62,7 +62,7 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 					# Pixel atlas carries the block's color; the vertex color is
 					# pure light/shade multiplied on top (Minecraft-style).
 					var col := Color(shade, shade, shade, 1.0)
-					var rect := Blocks.tile_uv(id)
+					var rect := Blocks.tile_uv_face(id, f.n.y)
 					var fuv := [Vector2(rect.position.x, rect.end.y), rect.position,
 						Vector2(rect.end.x, rect.position.y), rect.end]
 					var alpha: float = Blocks.ALPHA.get(id, 1.0)

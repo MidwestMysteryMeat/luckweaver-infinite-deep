@@ -1,8 +1,9 @@
 extends Node
-## Headless smoke test for the INFINITE world: boot → spawn on the surface
-## town → determinism + infinity checks → mine/place/doors/farm/cook/fluids/
-## light → craft chain → dig DOWN through depth bands → real-time combat →
-## fishing at the town pond → storage/binding → death drops → save round-trip.
+## Headless smoke test for the INFINITE BIOME world: boot → spawn in the wild
+## → determinism + infinity + biome checks → village discovery (waystone,
+## benches, folk) → dungeon stamping → day/night → mine/place/doors/farm/
+## cook/fluids/light → craft chain → depth bands → real-time combat (knockback,
+## stolen-gold recovery) → fishing → storage/binding → death drops → save.
 ## Prints "SMOKE PASS" and exits 0.
 
 var _fails := 0
@@ -33,23 +34,28 @@ func _ready() -> void:
 
 
 func _run_test(main) -> void:
-	print("[smoke] solo host + start run (surface town at origin)")
+	print("[smoke] solo host + start run (wilderness spawn)")
 	Net.start_solo()
 	main.show_lobby()
 	Game.request_set_class("lucky_bard")
 	Game.request_set_loot_rule("shared_gold")
 	Game.request_start_run()
-	await get_tree().process_frame
+	# World build is sliced across frames now — wait for the spawn.
+	var boot_wait := 0.0
+	while boot_wait < 30.0:
+		if Game.world != null and Game.world.get_player(1) != null:
+			break
+		await get_tree().create_timer(0.1).timeout
+		boot_wait += 0.1
 	_check(Game.in_run, "run started")
 	var p = Game.world.get_player(1)
 	_check(p != null, "player spawned")
 	var sy := int(p.global_position.y)
 	var sx := int(p.global_position.x)
 	var sz := int(p.global_position.z)
-	_check(Game.voxel.get_block(sx, sy - 1, sz) == Blocks.BRICK, "standing on the town plaza")
+	_check(Blocks.is_solid(Game.voxel.get_block(sx, sy - 1, sz)), "standing on solid wild ground")
 	_check(_count_item("pick_rusty") == 0, "Minecraft rule: empty-handed start")
-	_check(not Game.camps.is_empty() and not Game.waystones.is_empty(),
-		"town campfire + waystone registered from worldgen")
+	_check(WorldGen.biome_name(Game.run_seed, sx, sz) != "", "spawn has a biome name")
 
 	print("[smoke] INFINITE + deterministic generation")
 	var far := Game.voxel.get_block(10000, 30, -8000)
@@ -64,15 +70,75 @@ func _run_test(main) -> void:
 	WorldGen.fill_column(Game.run_seed, Vector2i(37, -12), b)
 	_check(a == b, "same column generates bit-identical twice (multiplayer-safe)")
 	var surf := WorldGen.surface_y(Game.run_seed, 300, 300)
-	_check(Game.voxel.get_block(300, surf, 300) in [Blocks.GRASS, Blocks.DIRT, Blocks.BRICK],
-		"surface heightmap holds (grass at y=%d)" % surf)
+	_check(Blocks.is_solid(Game.voxel.get_block(300, surf, 300)),
+		"surface heightmap holds (ground at y=%d)" % surf)
+	var biomes := {}
+	for bx in range(0, 2400, 120):
+		biomes[WorldGen.biome_at(Game.run_seed, bx, bx / 2)] = true
+	_check(biomes.size() >= 2, "multiple biomes within 2,400 blocks (%d found)" % biomes.size())
+
+	print("[smoke] village discovery: waystone, benches, folk")
+	var vill := {}
+	for vcx in range(-2, 3):
+		for vcz in range(-2, 3):
+			vill = WorldGen.village_in_cell(Game.run_seed, vcx, vcz)
+			if not vill.is_empty():
+				break
+		if not vill.is_empty():
+			break
+	_check(not vill.is_empty(), "a village generates near spawn")
+	if not vill.is_empty():
+		var va: Vector2i = vill.anchor
+		var enemies_pre: int = Game.enemies.size()
+		p.teleport_to(Vector3(float(va.x) + 0.5, float(vill.ground) + 2.0, float(va.y) + 0.5))
+		Game.voxel.stream_around([p.global_position])
+		Game.voxel.flush_all()
+		Game._server_discover_villages()
+		_check(not Game.waystones.is_empty(), "village waystone registered on discovery")
+		_check(not Game.camps.is_empty(), "village campfire registered as a camp")
+		_check(Game.enemies.size() > enemies_pre, "village folk woke up (%s)" % vill.variant)
+		_check(Game.voxel.get_block(va.x, int(vill.ground) + 1, va.y) == Blocks.WAYSTONE,
+			"waystone block stamped into the world")
+
+	print("[smoke] dungeons stamp into the deep")
+	var dung := {}
+	for dcx in range(-4, 5):
+		for dcz in range(-4, 5):
+			dung = WorldGen.dungeon_in_cell(Game.run_seed, dcx, dcz)
+			if not dung.is_empty():
+				break
+		if not dung.is_empty():
+			break
+	_check(not dung.is_empty(), "a dungeon complex generates nearby")
+	if not dung.is_empty():
+		var danchor: Vector3i = dung.anchor
+		var dblocks: Dictionary = dung.blocks
+		var probe: Vector3i = dblocks.keys()[0]
+		_check(Game.voxel.get_block_v(probe) == int(dblocks[probe]),
+			"dungeon blocks present in the world (anchor y=%d)" % danchor.y)
+
+	print("[smoke] day/night cycle")
+	Game.world_time = Game.DAY_LEN * 0.25
+	_check(not Game.is_night() and Game.daylight() > 0.9, "noon is bright")
+	Game.world_time = Game.DAY_LEN * 0.75
+	_check(Game.is_night(), "midnight is dark")
+	Game.world_time = Game.DAY_LEN * 0.25
+	# Back near the spawn point for the block-editing suite.
+	p.teleport_to(Vector3(float(sx) + 0.5, float(sy), float(sz) + 0.5))
 
 	print("[smoke] mining, placing, tool rules")
 	var bp := Vector3i(sx + 2, sy - 1, sz)
 	Game.request_break(bp)
 	_check(Game.voxel.get_block_v(bp) == Blocks.AIR, "block broken + logged")
-	Game.request_place(bp, _find_slot("brick"))
-	_check(Game.voxel.get_block_v(bp) == Blocks.BRICK, "block placed back")
+	var mined_slot := -1  # place back whatever the ground dropped
+	var inv0: Array = Game.my_rec().get("inv", [])
+	for i in range(inv0.size()):
+		if inv0[i] != null and Db.item_def(inv0[i].id).kind == "block":
+			mined_slot = i
+			break
+	_check(mined_slot >= 0, "mining dropped a placeable block")
+	Game.request_place(bp, mined_slot)
+	_check(Game.voxel.get_block_v(bp) != Blocks.AIR, "block placed back")
 	_check(Game.edit_log.size() >= 2, "edits recorded in the world log")
 
 	print("[smoke] doors, locks, magic breach")
@@ -91,10 +157,12 @@ func _run_test(main) -> void:
 
 	print("[smoke] lighting: glowstone + skylight repair")
 	var lp := Vector3i(sx - 4, sy + 1, sz - 4)
+	var light_pre: int = Game.voxel.light_at(lp.x, lp.y + 1, lp.z)
 	Game._apply_edit({"t": "set", "p": [lp.x, lp.y, lp.z], "b": Blocks.GLOWSTONE})
 	_check(Game.voxel.light_at(lp.x, lp.y + 1, lp.z) >= 14, "glowstone lights neighbors")
 	Game._apply_edit({"t": "set", "p": [lp.x, lp.y, lp.z], "b": 0})
-	_check(Game.voxel.light_at(lp.x, lp.y + 1, lp.z) == 15, "open surface cell back to skylight")
+	_check(Game.voxel.light_at(lp.x, lp.y + 1, lp.z) >= light_pre - 1,
+		"light repaired after the glowstone is mined")
 
 	print("[smoke] farming on the town plot")
 	var fp := Vector3i(sx - 3, sy, sz + 3)
@@ -118,22 +186,26 @@ func _run_test(main) -> void:
 	Game.request_craft("cook", {"slots": [_find_slot("hog_meat"), _find_slot("wheat")]})
 	_check(Game.my_rec().buffs.size() > pre_buffs, "feast buffs applied")
 
-	print("[smoke] fluids: pour, fuse, dissolve")
-	var wp := Vector3i(sx + 6, sy + 2, sz + 6)
+	print("[smoke] fluids: pour, fuse, dissolve (controlled basin in open air)")
+	var fy := sy + 28  # high platform: no trees, ponds, or slopes interfering
+	Game._apply_edit({"t": "box", "p": [sx + 4, fy - 1, sz + 4], "q": [sx + 14, fy - 1, sz + 9], "b": Blocks.STONE})
+	Game._apply_edit({"t": "box", "p": [sx + 4, fy, sz + 4], "q": [sx + 14, fy + 3, sz + 9], "b": Blocks.AIR})
+	var wp := Vector3i(sx + 6, fy + 2, sz + 6)
 	Game._apply_edit({"t": "set", "p": [wp.x, wp.y, wp.z], "b": Blocks.WATER})
 	for i in range(8):
 		Game._apply_edit({"t": "fluid", "p": [0, 0, 0]})
 	_check(Blocks.fluid_kind(Game.voxel.get_block(wp.x, wp.y - 1, wp.z)) == "water"
-		or Blocks.fluid_kind(Game.voxel.get_block(wp.x, sy, wp.z)) == "water", "water flows down")
-	var lavap := Vector3i(sx + 12, sy, sz)
+		or Blocks.fluid_kind(Game.voxel.get_block(wp.x, fy, wp.z)) == "water", "water flows down")
+	var lavap := Vector3i(sx + 10, fy, sz + 6)
 	Game._apply_edit({"t": "set", "p": [lavap.x, lavap.y, lavap.z], "b": Blocks.LAVA})
 	Game._apply_edit({"t": "set", "p": [lavap.x + 3, lavap.y, lavap.z], "b": Blocks.WATER})
 	var made_obsidian := false
 	for i in range(16):
 		Game._apply_edit({"t": "fluid", "p": [0, 0, 0]})
 		for dx in range(-1, 5):
-			if Game.voxel.get_block(lavap.x + dx, lavap.y, lavap.z) == Blocks.OBSIDIAN:
-				made_obsidian = true
+			for dy in range(-1, 2):
+				if Game.voxel.get_block(lavap.x + dx, lavap.y + dy, lavap.z) == Blocks.OBSIDIAN:
+					made_obsidian = true
 	_check(made_obsidian, "lava + water fuses into obsidian")
 
 	print("[smoke] craft chain: spell (mana), potion, skill merge, smith, enchant")
@@ -209,10 +281,13 @@ func _run_test(main) -> void:
 	_check(not Game.enemies[foe].alive or int(Game.enemies[foe].hp) < ehp, "live d20 strikes land")
 	_check(int(Game.my_rec().prof.combat.xp) > 0, "combat discipline gained XP")
 
-	print("[smoke] fishing at the town pond")
+	print("[smoke] fishing (dig a pool, fill it, cast)")
+	var pool := Vector3i(sx + 8, sy - 1, sz + 8)
+	Game._apply_edit({"t": "set", "p": [pool.x, pool.y - 1, pool.z], "b": Blocks.STONE})
+	Game._apply_edit({"t": "set", "p": [pool.x, pool.y, pool.z], "b": Blocks.WATER})
 	Game.give_item(1, "pole_wood", 1, {})
-	Game.request_fish([9, WorldGen.TOWN_Y, 9])
-	_check(Game.fishing.has(1), "line cast into the pond")
+	Game.request_fish([pool.x, pool.y, pool.z])
+	_check(Game.fishing.has(1), "line cast into the pool")
 	if Game.fishing.has(1):
 		Game.fishing[1].until = 0
 	Game._server_tick_fishing()
@@ -236,6 +311,7 @@ func _run_test(main) -> void:
 	_check(_find_slot("blade_rusty") >= 0, "soul-bound blade survived death")
 
 	print("[smoke] npc trade + quest (simple)")
+	Game._server_spawn_enemy("refuge_citizen", p.global_position + Vector3(2, 0.5, 0))
 	var folk := -1
 	for eid in Game.enemies:
 		if String(Game.enemies[eid].get("disp", "")) == "neutral" and Game.enemies[eid].alive:
@@ -247,7 +323,18 @@ func _run_test(main) -> void:
 		Game.request_npc_trade(folk, 0)
 		_check(int(Game.my_rec().gold) < 500, "simple trade works")
 	else:
-		_check(false, "no citizen found in town")
+		_check(false, "no neutral folk to trade with")
+
+	print("[smoke] thieves return stolen gold on death")
+	Game._server_spawn_enemy("cave_imp", p.global_position + Vector3(-2, 0.5, 0))
+	var imp := -1
+	for eid in Game.enemies:
+		if Game.enemies[eid].type == "cave_imp" and Game.enemies[eid].alive:
+			imp = eid
+	Game.enemies[imp]["stolen"] = 25
+	var gold_pre: int = int(Game.my_rec().gold)
+	Game.enemy_defeated(imp, 1)
+	_check(int(Game.my_rec().gold) >= gold_pre + 25, "recovered the imp's stolen 25 gold")
 
 	print("[smoke] save round-trip (single world log)")
 	Game.save_now()

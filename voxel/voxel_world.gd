@@ -27,6 +27,7 @@ var world_seed := 0
 var columns := {}      # Vector2i -> {"data": PBA, "light": PBA, "lit": bool}
 var chunks := {}       # Vector3i(cx, sy, cz) -> {"body","mesh","shape"} (streamed-in only)
 var dirty := {}        # Vector3i section keys
+var built := {}        # Vector3i sections whose collision has been applied ≥ once
 var fluid_cells := {}  # Vector3i cell -> true (awake fluid/gas cells)
 var _fluid_steps := 0
 var _stream_accum := 0.0
@@ -190,6 +191,7 @@ func stream_around(positions: Array) -> void:
 			chunks[sk].body.queue_free()
 			chunks.erase(sk)
 			dirty.erase(sk)
+			built.erase(sk)
 
 
 func _stream_tick() -> void:
@@ -199,7 +201,7 @@ func _stream_tick() -> void:
 		for p in players.get_children():
 			positions.append(p.global_position)
 	if positions.is_empty():
-		positions.append(Vector3(0, WorldGen.TOWN_Y + 2, 0))
+		positions.append(Vector3(0, WorldGen.SURFACE, 0))
 	stream_around(positions)
 
 
@@ -239,15 +241,34 @@ func flush_all() -> void:
 
 
 ## MAIN THREAD ONLY: worker-built arrays → mesh + collision.
-func _apply_built(sk: Vector3i, built: Dictionary) -> void:
+func _apply_built(sk: Vector3i, b: Dictionary) -> void:
 	var ch: Dictionary = chunks[sk]
-	ch.mesh.mesh = Mesher.make_mesh(built)
-	if built.faces.size() > 0:
+	ch.mesh.mesh = Mesher.make_mesh(b)
+	if b.faces.size() > 0:
 		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(built.faces)
+		shape.set_faces(b.faces)
 		ch.shape.shape = shape
 	else:
 		ch.shape.shape = null
+	built[sk] = true
+
+
+## Is the terrain under a world position solid ground to simulate on? False
+## while the column is still generating/meshing — players freeze in place for
+## a beat instead of falling through the not-yet-collidable world.
+func ready_at(pos: Vector3) -> bool:
+	var ck := column_key(int(floor(pos.x)), int(floor(pos.z)))
+	if not columns.has(ck):
+		return false
+	var sy := clampi(int(pos.y) / 16, 0, SECTIONS - 1)
+	# The player's own section AND the one below (ground near a boundary).
+	for s in [sy, maxi(sy - 1, 0)]:
+		var sk := Vector3i(ck.x, s, ck.y)
+		if not chunks.has(sk):
+			return false  # not streamed in yet
+		if not built.has(sk) and dirty.has(sk):
+			return false  # created but no collision applied yet
+	return true
 
 
 # ---------------------------------------------------------------- lighting

@@ -17,6 +17,7 @@ signal enc_state(state: Dictionary)
 
 # UI / feedback
 signal notify(text: String)
+signal player_hurt(frac: float)
 signal chat_line(who: String, text: String)
 signal open_bench(kind: String)
 signal chest_contents(key: String, items: Array)

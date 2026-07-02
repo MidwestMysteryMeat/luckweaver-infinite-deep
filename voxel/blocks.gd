@@ -87,6 +87,8 @@ const IRONWOOD_LOG := 74
 const SHROOM_STALK := 75
 const SHROOM_CAP := 76
 const CHEST_STORE := 77
+const SNOW := 80
+const PLANK := 81
 
 const DEFS := {
 	AIR: {"name": "Air", "color": Color(0, 0, 0, 0), "hard": -1.0, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
@@ -181,6 +183,9 @@ const DEFS := {
 	SHROOM_CAP: {"name": "Shroom Cap", "color": Color(0.6, 0.35, 0.55), "hard": 0.5, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "sootcap"},
 	# Player storage: shared per-chest inventory (see Game.chest_store).
 	CHEST_STORE: {"name": "Storage Chest", "color": Color(0.6, 0.42, 0.2), "hard": 1.0, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "chest_store"},
+	# Overworld biomes.
+	SNOW: {"name": "Snow", "color": Color(0.92, 0.94, 0.98), "hard": 0.4, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "dirt"},
+	PLANK: {"name": "Plank", "color": Color(0.62, 0.47, 0.28), "hard": 0.9, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "wood"},
 }
 
 ## Alpha < 1 renders on the translucent mesh pass (see Mesher) — water you can
@@ -248,37 +253,191 @@ static var _mat: StandardMaterial3D = null
 static var _mat_trans: StandardMaterial3D = null
 static var _atlas: ImageTexture = null
 
-## Minecraft-style pixel atlas, generated once at boot: a 16×16-texel tile per
-## block id (16 tiles per row → 256×256). Base color + deterministic speckle;
-## ores get flecks, glow blocks get a bright core. Vertex color multiplies on
-## top, so the light engine keeps working unchanged.
+## Virtual atlas tiles (indices past the block ids) for per-face looks.
+const TILE_GRASS_SIDE := 96
+const TILE_SNOW_SIDE := 97
+const TILE_LOG_TOP := 98
+
+## Which tile each face of a block uses: up / side / down (defaults to the
+## block's own tile). This is what makes grass read as GRASS.
+const FACE_TILES := {
+	GRASS: {"up": GRASS, "side": TILE_GRASS_SIDE, "down": DIRT},
+	SNOW: {"up": SNOW, "side": TILE_SNOW_SIDE, "down": DIRT},
+	WOOD: {"up": TILE_LOG_TOP, "side": WOOD, "down": TILE_LOG_TOP},
+	IRONWOOD_LOG: {"up": TILE_LOG_TOP, "side": IRONWOOD_LOG, "down": TILE_LOG_TOP},
+}
+
+
+## Fantasy pixel-art atlas, generated once at boot: a 16×16-texel tile per
+## block id (16 tiles per row → 256×256). Every family gets a hand-styled
+## pattern — brick courses, wood grain, ore veins, water ripple, mottled
+## leaves. Vertex color multiplies on top, so the light engine is untouched.
 static func atlas() -> ImageTexture:
 	if _atlas != null:
 		return _atlas
 	var img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
 	for id in DEFS:
-		var def: Dictionary = DEFS[id]
-		var base: Color = def.color
-		var tx := (int(id) % 16) * 16
-		var ty := (int(id) / 16) * 16
-		var fleck: bool = String(def.get("drop", "")).ends_with("_ingot") \
-			or id == GOLD_ORE or id == LUCKSTONE
-		for px in range(16):
-			for py in range(16):
-				var h := hash(Vector3i(px, py, int(id)))
-				var v := 1.0 + (float(absi(h) % 25) - 12.0) / 100.0
-				var c := Color(base.r * v, base.g * v, base.b * v, 1.0)
-				if fleck:
-					# Gray stone matrix with colored ore flecks.
-					var g := 0.42 * v
-					c = Color(g, g, g * 1.08, 1.0)
-					if absi(h) % 7 == 0:
-						c = Color(base.r * 1.15, base.g * 1.15, base.b * 1.15, 1.0)
-				elif def.glow and Vector2(px - 8, py - 8).length() < 4.5:
-					c = c.lightened(0.35)
-				img.set_pixel(tx + px, ty + py, c)
+		_paint_tile(img, int(id), DEFS[id])
+	# Virtual per-face tiles.
+	_paint_tile(img, TILE_GRASS_SIDE, DEFS[DIRT], "grass_side")
+	_paint_tile(img, TILE_SNOW_SIDE, DEFS[DIRT], "snow_side")
+	_paint_tile(img, TILE_LOG_TOP, DEFS[WOOD], "log_top")
 	_atlas = ImageTexture.create_from_image(img)
 	return _atlas
+
+
+static func _paint_tile(img: Image, id: int, def: Dictionary, style := "") -> void:
+	var base: Color = def.color
+	var tx := (id % 16) * 16
+	var ty := (id / 16) * 16
+	if style == "":
+		style = _style_for(id, def)
+	for px in range(16):
+		for py in range(16):
+			img.set_pixel(tx + px, ty + py, _texel(id, style, px, py, base, def))
+
+
+static func _style_for(id: int, def: Dictionary) -> String:
+	if String(def.get("drop", "")).ends_with("_ingot") or id == GOLD_ORE \
+			or id == LUCKSTONE or id == ADAMANT_ORE:
+		return "ore"
+	match id:
+		BRICK, DART_TRAP: return "brick"
+		PLANK: return "plank"
+		WOOD, IRONWOOD_LOG, SHROOM_STALK: return "bark"
+		GRASS: return "grass_top"
+		LEAVES, KELP, VINE: return "leaves"
+		STONE, BEDROCK, OBSIDIAN, GRAVEL: return "stone"
+		SAND, DIRT: return "grain"
+		SNOW, ICE: return "snow"
+		WATER, WATER_F3, WATER_F2, WATER_F1, ACID, ACID_F3, ACID_F2, ACID_F1: return "wave"
+		LAVA, LAVA_F2, LAVA_F1: return "lava"
+		GLOWSTONE, LUCKSTONE: return "glow"
+		CHEST, CHEST_EMPTY, CHEST_TRAPPED, CHEST_STORE: return "chest"
+		DOOR, DOOR_OPEN, DOOR_LOCKED, DOOR_TRAPPED: return "door"
+		BENCH_SMITH, BENCH_SPELL, BENCH_ALCH, BENCH_SKILL, BENCH_SHOP, BENCH_ENCH, WAYSTONE: return "rune"
+		GOLD_BLOCK: return "gold"
+	return "plain"
+
+
+static func _texel(id: int, style: String, px: int, py: int, base: Color, def: Dictionary) -> Color:
+	var h := hash(Vector3i(px, py, id))
+	var n := float(absi(h) % 100) / 100.0            # per-pixel noise 0..1
+	var v := 0.9 + n * 0.2                            # ±10% value jitter
+	var c := Color(base.r * v, base.g * v, base.b * v, 1.0)
+	var patch := float(absi(hash(Vector3i(px / 4, py / 4, id * 7))) % 100) / 100.0
+	match style:
+		"stone":
+			# Rocky patches: 4×4 cells shifted light/dark, cracked pixels.
+			c = c * (0.88 + patch * 0.22)
+			if n > 0.94:
+				c = c.darkened(0.3)
+		"grain":
+			if n > 0.8:
+				c = c.darkened(0.18)
+			elif n < 0.12:
+				c = c.lightened(0.12)
+		"snow":
+			c = c.lightened(0.04 * float(py % 3))
+			if n > 0.95:
+				c = Color(1, 1, 1)
+		"brick":
+			var row := py / 4
+			var mortar: bool = py % 4 == 3 or (px + (4 if row % 2 == 1 else 0)) % 8 == 7
+			c = c.darkened(0.42) if mortar else c * (0.92 + patch * 0.16)
+		"plank":
+			if py % 4 == 3:
+				c = c.darkened(0.35)          # board seams
+			elif absi(h) % 11 == 0:
+				c = c.darkened(0.15)          # grain flecks
+		"bark":
+			var streak := float(absi(hash(Vector2i(px, id))) % 100) / 100.0
+			c = c * (0.8 + streak * 0.35)
+			if absi(h) % 13 == 0:
+				c = c.darkened(0.25)
+		"log_top":
+			var r := Vector2(px - 8, py - 8).length()
+			c = c.lightened(0.15) if int(r) % 3 == 0 else c * 0.9  # growth rings
+		"grass_top":
+			c = c * (0.85 + patch * 0.25)
+			if n > 0.88:
+				c = c.lightened(0.2)          # bright blades
+			elif n < 0.08:
+				c = c.darkened(0.2)
+		"grass_side":
+			# Dirt with a grassy lip dripping down.
+			var lip := 3 + (absi(hash(Vector2i(px, id))) % 3)
+			if py < lip:
+				c = Color(0.36, 0.6, 0.3) * (0.9 + n * 0.2)
+			elif n > 0.85:
+				c = c.darkened(0.15)
+		"snow_side":
+			var lip2 := 4 + (absi(hash(Vector2i(px, id))) % 2)
+			if py < lip2:
+				c = Color(0.92, 0.94, 0.98) * (0.94 + n * 0.08)
+			elif n > 0.85:
+				c = c.darkened(0.15)
+		"leaves":
+			c = c * (0.75 + patch * 0.4)
+			if n > 0.92:
+				c = c.darkened(0.45)          # gaps between leaf clumps
+		"ore":
+			# Stone matrix with clustered veins of the ore's color.
+			var g := 0.42 * v * (0.9 + patch * 0.2)
+			c = Color(g, g, g * 1.08, 1.0)
+			for k in range(3):
+				var vx := absi(hash(Vector2i(id, k * 3))) % 12 + 2
+				var vy := absi(hash(Vector2i(id, k * 3 + 1))) % 12 + 2
+				if Vector2(px - vx, py - vy).length() < 1.9:
+					c = Color(base.r * 1.2, base.g * 1.2, base.b * 1.2, 1.0)
+		"wave":
+			var band := (px + py * 3) % 8
+			c = c.lightened(0.18) if band < 2 else c * (0.92 + n * 0.12)
+		"lava":
+			c = base.darkened(0.55)
+			if patch > 0.5 or n > 0.85:
+				c = Color(base.r * 1.25, base.g * (0.8 + n * 0.5), base.b, 1.0)  # molten veins
+		"glow":
+			var r2 := Vector2(px - 8, py - 8).length()
+			c = c.lightened(clampf(0.55 - r2 * 0.06, 0.0, 0.55))
+			if n > 0.9:
+				c = c.lightened(0.3)
+		"chest":
+			if py % 15 == 0 or px % 15 == 0:
+				c = c.darkened(0.4)           # banding
+			elif py == 5:
+				c = c.darkened(0.5)           # lid seam
+			elif py >= 6 and py <= 8 and px >= 7 and px <= 8:
+				c = Color(0.95, 0.8, 0.3)     # latch
+			elif absi(h) % 9 == 0:
+				c = c.darkened(0.12)
+		"door":
+			if px % 15 == 0 or py % 15 == 0:
+				c = c.darkened(0.35)
+			elif px >= 3 and px <= 12 and (py == 3 or py == 7 or py == 11):
+				c = c.darkened(0.3)           # panel lines
+			elif px == 12 and py == 8:
+				c = Color(0.9, 0.75, 0.3)     # handle
+			elif px % 5 == 0:
+				c = c.darkened(0.12)          # plank joints
+		"gold":
+			c = c * (0.9 + patch * 0.2)
+			if (px + py) % 5 == 0:
+				c = c.lightened(0.2)
+		"rune":
+			c = c * (0.85 + patch * 0.2)
+			# A glowing rune cross in the center.
+			var cx := absi(px - 8)
+			var cy := absi(py - 8)
+			if (cx <= 1 and cy <= 5) or (cy <= 1 and cx <= 5):
+				c = base.lightened(0.5)
+			if px % 15 == 0 or py % 15 == 0:
+				c = c.darkened(0.35)
+		_:
+			if def.glow and Vector2(px - 8, py - 8).length() < 4.5:
+				c = c.lightened(0.35)
+	c.a = 1.0
+	return c
 
 
 static func material() -> StandardMaterial3D:
@@ -309,6 +468,19 @@ static func tile_uv(id: int) -> Rect2:
 	var u := (float(id % 16) * 16.0 + 0.5) / 256.0
 	var v := (float(id / 16) * 16.0 + 0.5) / 256.0
 	return Rect2(u, v, 15.0 / 256.0, 15.0 / 256.0)
+
+
+## Per-face tile: ny is the face normal's y (+1 up, -1 down, 0 side).
+static func tile_uv_face(id: int, ny: int) -> Rect2:
+	var ft: Dictionary = FACE_TILES.get(id, {})
+	if ft.is_empty():
+		return tile_uv(id)
+	var which := "side"
+	if ny > 0:
+		which = "up"
+	elif ny < 0:
+		which = "down"
+	return tile_uv(int(ft[which]))
 
 
 static func get_def(id: int) -> Dictionary:

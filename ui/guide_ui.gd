@@ -4,16 +4,27 @@ extends Control
 
 const PAGES := [
 	["Getting Started",
-"""You are a Luckweaver in the Gilded Refuge — the town above the Infinite Deep.
+"""You wake in an infinite wilderness. Villages hold benches and folk;
+the Deep begins wherever you start digging.
 • WASD move, Space jump (hold in water to swim), Shift sprint, CTRL dodge-dash.
 • LMB attacks foes / (hold) mines blocks. RMB places blocks or uses items.
-• E interacts: benches, doors, chests, portals, waystones — and creatures
-  (Talk to folk, Hunt animals... or offer wheat to TAME one as a pet).
+• E interacts: benches, doors, chests, waystones — and creatures
+  (Trade with folk, Hunt animals... or offer wheat to TAME one as a pet).
 • Tab satchel · K disciplines & perks · M map · H this book · T chat · Esc pause.
 • Gamepad works: left stick move, right stick look, A jump, B dodge, X interact.
-Take the southern portal to descend. Every 5th floor holds a BOSS.
-Classes: Shadowblade Rogue, Runesmith, Bulwark Knight, Chaos Warlock,
-Soul Warden, Wandering Bard — each starts with a signature spell."""],
+There is NO portal: dig down to descend. Every 8 blocks below the surface
+is a deeper, deadlier, richer BAND. Bosses stalk band 3 and below.
+Night falls on the overworld — monsters walk it. Build, hide, or fight."""],
+	["Spells & Mana",
+"""Spells are ITEMS you learn, keep forever, and cast on MANA (blue bar).
+• LEARN: find a village RUNE FORGE (E) → craft "Learn Spell" (100 g) for your
+  class's signature spell — or forge others from rune + sigil + essence.
+• EQUIP: the spell appears in your satchel (Tab). Drag/click it onto a
+  hotbar slot like any item.
+• CAST: select its slot (1-9 / mouse wheel), aim, RMB. Costs mana; mana
+  regenerates (faster at campfires). Spells NEVER drop on death.
+• Bigger spells cost more mana. Walls, breaches, invisibility, firestorms,
+  healing, resurrection — see the Rune Forge list for what you can build."""],
 	["Combat (real-time d20)",
 """Combat is REAL-TIME, but every strike is a d20 + attack bonus vs the foe's AC.
 • LMB swings (watch your arm arc); bows fire aimed shots from afar.
@@ -25,7 +36,7 @@ Soul Warden, Wandering Bard — each starts with a signature spell."""],
 • Strike from smoke, invisibility, or long range for a SNEAK ATTACK (2× opener).
 • Watch for AMBUSHES, cave-ins, gas leaks, and gold rushes as you explore."""],
 	["Crafting Benches",
-"""Town (north wall) and hidden rooms below hold six benches:
+"""Allied and cozy villages hold all six benches on their plaza:
 • ANVIL — smith weapons/armor/tools from stone, hides, bone, and metal
   (copper → iron → silver → adamant, deeper floors hold richer ores).
 • RUNE FORGE — rune + sigil + essence = spell (walls, breaches, invisibility...).
@@ -46,10 +57,13 @@ Soul Warden, Wandering Bard — each starts with a signature spell."""],
 • Storage Chests (craft: 6 wood) share loot with your party; town chests persist.
 • DEATH drops your items where you fell — corpse-run to reclaim them.
   Spells, enchanted gear, and soul-bound items stay with you."""],
-	["The Deep",
-"""• Biomes: delves, caverns, lakes, fungal grottos, crypts, frozen halls,
-  molten depths — each with its own boss every 5th floor.
-• Hamlets hide below: allied, cozy, hostile (bandits!), or haunted.
+	["The World & The Deep",
+"""• Overworld biomes: meadows, elderwood, dunes, frostveil, mirkfen,
+  titan spires, and the sunken sea — villages and ruins dot all of them.
+• Villages come allied, cozy, hostile (bandits!), or haunted — guardians,
+  shops, quests, and warm beds in the friendly ones.
+• Below: caves widen with depth, brick DUNGEONS hide loot and traps,
+  ores run copper → iron → silver → adamant, lava pools at bedrock.
 • Villagers and explorers talk, trade, and post quests. Completing them builds
   REPUTATION: shop discounts, richer contracts — and some villagers will even
   move to your Refuge. Robbing folk is a d20 gamble with consequences.

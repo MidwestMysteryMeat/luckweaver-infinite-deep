@@ -53,8 +53,21 @@ func _write(name: String, elements: Array) -> void:
 		var sy := (i / 4) * 8
 		for px in range(8):
 			for py in range(8):
-				var v := 1.0 + (float(absi(hash(Vector3i(px, py, i))) % 22) - 10.0) / 100.0
-				img.set_pixel(sx + px, sy + py, Color(base.r * v, base.g * v, base.b * v, 1.0))
+				# Fantasy pixel-art shading: top-lit gradient, darker 1px rim,
+				# dither noise, and sparse bright weave — reads as cloth/hide/
+				# metal instead of flat plastic.
+				var h := absi(hash(Vector3i(px, py, i)))
+				var v := 1.12 - float(py) * 0.045          # light falls from above
+				v *= 1.0 + (float(h % 22) - 10.0) / 130.0  # dither
+				if px == 0 or px == 7 or py == 0 or py == 7:
+					v *= 0.72                               # rim outline
+				elif h % 17 == 0:
+					v *= 1.18                               # weave highlight
+				elif h % 13 == 0:
+					v *= 0.85                               # weave shadow
+				img.set_pixel(sx + px, sy + py,
+					Color(clampf(base.r * v, 0.0, 1.0), clampf(base.g * v, 0.0, 1.0),
+						clampf(base.b * v, 0.0, 1.0), 1.0))
 	var b64 := Marshalls.raw_to_base64(img.save_png_to_buffer())
 	for el in elements:
 		var nm2 := String(el.name)

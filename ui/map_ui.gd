@@ -24,7 +24,7 @@ func _init(main_ref) -> void:
 	_tex.stretch_mode = TextureRect.STRETCH_SCALE
 	_tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	root.add_child(_tex)
-	_marker_info = UITheme.label("48×48 around YOU (center dot) · bright = open floor · dark = rock · cyan = waystone · gold = portal", 13, UITheme.DIM)
+	_marker_info = UITheme.label("48×48 around YOU (center dot) · bright = open ground · dark = rock · cyan = waystone · gold = village", 13, UITheme.DIM)
 	_marker_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_marker_info)
 	var close := UITheme.button("Close (M)", 14)
@@ -71,10 +71,10 @@ func refresh() -> void:
 						col = col.lightened(0.3)
 				break
 			img.set_pixel(mx, mz, col)
-	# Markers (window-relative): gold = portal down, cyan = waystones, ● = you.
-	var pp: Array = Game.gen_info.get("portal_pos", [])
-	if pp.size() == 3:
-		_blot(img, int(pp[0]) - cx + 24, int(pp[2]) - cz + 24, Color(1.0, 0.75, 0.1))
+	# Markers (window-relative): gold = village anchors, cyan = waystones, ● = you.
+	for v in WorldGen.villages_near(Game.run_seed, Vector3(cx, cy, cz), 32.0):
+		var va: Vector2i = v.anchor
+		_blot(img, va.x - cx + 24, va.y - cz + 24, Color(1.0, 0.75, 0.1))
 	for key in Game.waystones:
 		var wp: Vector3 = Game.waystones[key].pos
 		_blot(img, int(wp.x) - cx + 24, int(wp.z) - cz + 24, Color(0.4, 0.8, 1.0))
