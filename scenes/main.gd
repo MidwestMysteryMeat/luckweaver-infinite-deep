@@ -32,7 +32,7 @@ func _on_net_error(_msg: String) -> void:
 
 func _clear_screen() -> void:
 	for c in ui_layer.get_children():
-		c.free()
+		c.queue_free()
 	menu = null
 	lobby = null
 	hud = null
@@ -59,7 +59,7 @@ func show_lobby() -> void:
 func _on_run_started() -> void:
 	_clear_screen()
 	if world != null:
-		world.free()
+		world.queue_free()
 	world = LLWorld.new()
 	add_child(world)  # world._ready registers with Game and loads the floor
 	hud = HUD.new(self)

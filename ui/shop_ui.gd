@@ -61,7 +61,7 @@ func refresh() -> void:
 		return
 	_gold.text = "Your purse: ◉ %d" % Game.my_rec().get("gold", 0)
 	for c in _buy_list.get_children():
-		c.free()
+		c.queue_free()
 	var stock: Array = Db.shop_stock(Game.run_seed, Game.floor_num)
 	for i in range(stock.size()):
 		var offer: Dictionary = stock[i]
@@ -71,7 +71,7 @@ func refresh() -> void:
 		b.pressed.connect(func(): Game.request_shop("buy", idx))
 		_buy_list.add_child(b)
 	for c in _sell_list.get_children():
-		c.free()
+		c.queue_free()
 	var inv: Array = Game.my_rec().get("inv", [])
 	for i in range(inv.size()):
 		var e = inv[i]

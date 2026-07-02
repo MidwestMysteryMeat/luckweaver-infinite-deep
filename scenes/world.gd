@@ -152,7 +152,11 @@ func spawn_hit_fx(eid: int, dmg: int, txt: String) -> void:
 
 
 func clear_entities() -> void:
+	# queue_free + immediate rename: freed nodes linger until end of frame,
+	# and str(eid) lookups must not find corpses.
 	for n in enemies_node.get_children():
-		n.free()
+		n.name = "dead_%s" % n.name
+		n.queue_free()
 	for n in pickups_node.get_children():
-		n.free()
+		n.name = "gone_%s" % n.name
+		n.queue_free()

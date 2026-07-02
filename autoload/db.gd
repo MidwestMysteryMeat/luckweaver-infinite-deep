@@ -211,7 +211,7 @@ const CLASSES := {
 	"rune_dealer": {"name": "Runesmith", "hp": 100, "luck": 15, "gold": 60,
 		"atk": 2, "def": 1, "dmg": [1, 4, 0],
 		"color": Color(0.35, 0.5, 0.9), "desc": "Starts with spellcrafting reagents."},
-	"high_roller": {"name": "Vault Crusader", "hp": 120, "luck": 10, "gold": 150,
+	"high_roller": {"name": "Bulwark Knight", "hp": 120, "luck": 10, "gold": 150,
 		"atk": 2, "def": 3, "dmg": [1, 6, 0],
 		"color": Color(0.95, 0.8, 0.3), "desc": "Armored and rich. Silver Tongue passive: +15% gold from kills."},
 	"chaos_croupier": {"name": "Chaos Warlock", "hp": 80, "luck": 30, "gold": 40,
@@ -220,7 +220,7 @@ const CLASSES := {
 	"soul_banker": {"name": "Soul Warden", "hp": 140, "luck": 5, "gold": 100,
 		"atk": 1, "def": 2, "dmg": [1, 8, 0],
 		"color": Color(0.4, 0.4, 0.5), "desc": "Soul Strike passive: critical hits land 50% harder."},
-	"lucky_bard": {"name": "Fortune Bard", "hp": 100, "luck": 25, "gold": 70,
+	"lucky_bard": {"name": "Wandering Bard", "hp": 100, "luck": 25, "gold": 70,
 		"atk": 2, "def": 1, "dmg": [1, 4, 0],
 		"color": Color(0.3, 0.85, 0.6), "desc": "Digs up fortune — luck-on-mining passive."},
 }

@@ -33,7 +33,7 @@ func _init(main_ref) -> void:
 
 func refresh() -> void:
 	for c in _list.get_children():
-		c.free()
+		c.queue_free()
 	if Game.waystones.is_empty():
 		_list.add_child(UITheme.label("No other waystones hum on this floor.", 13, UITheme.DIM))
 		return

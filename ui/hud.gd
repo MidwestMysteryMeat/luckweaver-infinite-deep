@@ -125,6 +125,8 @@ func _init(main_ref) -> void:
 	Events.chat_line.connect(_chat)
 	Events.my_record_changed.connect(_refresh_stats)
 	Events.floor_loaded.connect(func(f): _floor.text = _floor_name(f))
+	# The first floor_loaded fires before the HUD exists — backfill it.
+	_floor.text = _floor_name(Game.floor_num)
 
 
 func _floor_name(f: int) -> String:
@@ -212,7 +214,7 @@ func _toast(text: String) -> void:
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_toast_box.add_child(l)
 	if _toast_box.get_child_count() > 6:
-		_toast_box.get_child(0).free()
+		_toast_box.get_child(0).queue_free()
 	var tw := create_tween()
 	tw.tween_interval(4.0)
 	tw.tween_property(l, "modulate:a", 0.0, 1.0)
@@ -223,7 +225,7 @@ func _chat(who: String, text: String) -> void:
 	var l := UITheme.label("%s: %s" % [who, text], 13)
 	_chat_box.add_child(l)
 	if _chat_box.get_child_count() > 8:
-		_chat_box.get_child(0).free()
+		_chat_box.get_child(0).queue_free()
 
 
 func chat_open() -> bool:

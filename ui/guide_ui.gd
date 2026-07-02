@@ -5,19 +5,25 @@ extends Control
 const PAGES := [
 	["Getting Started",
 """You are a Luckweaver in the Gilded Refuge — the town above the Infinite Deep.
-• WASD move, Space jump (hold in water to swim), Shift sprint, mouse to look.
-• LMB (hold) mines blocks. RMB places blocks / uses the selected item.
-• E interacts: benches, doors, chests, portals, waystones — and creatures.
-• Tab = satchel, K = disciplines, M = floor map, T = chat, Esc = pause.
-Take the southern portal to descend. Every 5th floor holds the Vault Tyrant."""],
-	["Combat (d20)",
-"""Fights are turn-based: d20 + attack bonus vs the foe's AC.
-• Natural 20 = critical (double dice). Natural 1 = fumble.
-• LUCK bends everything: advantage procs, wider crit range, rerolls, flee odds.
-• Defend (+4 AC), cast combat spells, drink potions, or Shoot with a bow.
+• WASD move, Space jump (hold in water to swim), Shift sprint, CTRL dodge-dash.
+• LMB attacks foes / (hold) mines blocks. RMB places blocks or uses items.
+• E interacts: benches, doors, chests, portals, waystones — and creatures
+  (Talk to folk, Hunt animals... or offer wheat to TAME one as a pet).
+• Tab satchel · K disciplines & perks · M map · H this book · T chat · Esc pause.
+• Gamepad works: left stick move, right stick look, A jump, B dodge, X interact.
+Take the southern portal to descend. Every 5th floor holds a BOSS.
+Classes: Shadowblade Rogue, Runesmith, Bulwark Knight, Chaos Warlock,
+Soul Warden, Wandering Bard — each starts with a signature spell."""],
+	["Combat (real-time d20)",
+"""Combat is REAL-TIME, but every strike is a d20 + attack bonus vs the foe's AC.
+• LMB swings (watch your arm arc); bows fire aimed shots from afar.
+• Natural 20 = critical (double dice). Natural 1 = fumble. Dodge with CTRL.
+• LUCK bends everything: advantage procs, wider crit range, rerolls.
+• Bosses TELEGRAPH big attacks (⚠ WINDUP) — move before the blow lands!
 • Statuses work both ways: burn, poison, and sleep afflict foes too.
 • Every creature resists some damage and fears another — silver cuts ghosts.
-• Strike from smoke or from range for a SNEAK ATTACK (free doubled opener)."""],
+• Strike from smoke, invisibility, or long range for a SNEAK ATTACK (2× opener).
+• Watch for AMBUSHES, cave-ins, gas leaks, and gold rushes as you explore."""],
 	["Crafting Benches",
 """Town (north wall) and hidden rooms below hold six benches:
 • ANVIL — smith weapons/armor/tools from stone, hides, bone, and metal
@@ -42,12 +48,17 @@ Take the southern portal to descend. Every 5th floor holds the Vault Tyrant."""]
   Spells, enchanted gear, and soul-bound items stay with you."""],
 	["The Deep",
 """• Biomes: delves, caverns, lakes, fungal grottos, crypts, frozen halls,
-  molten depths. Watch for hamlets — allied, cozy, hostile, or haunted.
-• Villagers and explorers talk, trade, and post quests. Robbing them is a d20.
+  molten depths — each with its own boss every 5th floor.
+• Hamlets hide below: allied, cozy, hostile (bandits!), or haunted.
+• Villagers and explorers talk, trade, and post quests. Completing them builds
+  REPUTATION: shop discounts, richer contracts — and some villagers will even
+  move to your Refuge. Robbing folk is a d20 gamble with consequences.
 • Traps everywhere: tripwires, glyphs, darts, gas chests, pressure-plate
   CRUSHERS. Every trap is a block — spot it, mine it, disarm it.
 • Waystones are teleport bookmarks; place your own network.
-• The dungeon adapts: win too comfortably and it gets meaner."""],
+• Spend skill points (K) to unlock PERKS at 1 / 3 / 5 points per discipline.
+• The dungeon adapts: win too comfortably and it gets meaner.
+• DEATH drops your gear where you fell — soul-bind treasures at the Altar."""],
 ]
 
 var main

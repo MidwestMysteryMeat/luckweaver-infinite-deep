@@ -63,7 +63,7 @@ func _on_contents(key: String, items: Array) -> void:
 		return
 	_items = items
 	for c in _chest_list.get_children():
-		c.free()
+		c.queue_free()
 	if _items.is_empty():
 		_chest_list.add_child(UITheme.label("(empty)", 13, UITheme.DIM))
 	for i in range(_items.size()):
@@ -80,7 +80,7 @@ func _refresh_inv() -> void:
 	if not is_inside_tree():
 		return
 	for c in _inv_list.get_children():
-		c.free()
+		c.queue_free()
 	var inv: Array = Game.my_rec().get("inv", [])
 	for i in range(inv.size()):
 		var e = inv[i]

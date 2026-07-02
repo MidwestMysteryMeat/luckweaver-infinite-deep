@@ -48,7 +48,7 @@ func refresh() -> void:
 	var points := int(rec.get("skill_points", 0))
 	_points.text = "Skill points: %d" % points
 	for c in _rows.get_children():
-		c.free()
+		c.queue_free()
 	var prof: Dictionary = rec.get("prof", {})
 	for skill in Db.PROFS:
 		var p: Dictionary = prof.get(skill, {"xp": 0, "lvl": 1})

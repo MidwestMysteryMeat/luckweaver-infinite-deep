@@ -43,7 +43,7 @@ func refresh() -> void:
 	if not is_inside_tree():
 		return
 	for c in _grid.get_children():
-		c.free()
+		c.queue_free()
 	var inv: Array = Game.my_rec().get("inv", [])
 	for i in range(inv.size()):
 		var e = inv[i]

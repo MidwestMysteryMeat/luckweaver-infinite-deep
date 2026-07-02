@@ -96,18 +96,18 @@ func render(st: Dictionary) -> void:
 	_intent.text = String(st.get("intent", ""))
 
 	for c in _log.get_children():
-		c.free()
+		c.queue_free()
 	for line in st.lines:
 		_log.add_child(UITheme.label(str(line), 14))
 
 	# Dice showcase: the last couple of rolls, huge.
 	for c in _dice_row.get_children():
-		c.free()
+		c.queue_free()
 	for r in st.get("rolls", []):
 		_dice_row.add_child(_die_panel(r))
 
 	for c in _actions.get_children():
-		c.free()
+		c.queue_free()
 	for a in st.actions:
 		var b := UITheme.button(str(a.label), 16)
 		var aid := str(a.id)

@@ -88,7 +88,7 @@ func refresh() -> void:
 	if not is_inside_tree():
 		return
 	for c in _list.get_children():
-		c.free()
+		c.queue_free()
 	# Smithing shows recipes first.
 	if mode == "smith":
 		var eff := Db.prof_eff(Game.my_rec(), "smithing")
