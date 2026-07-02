@@ -1,27 +1,20 @@
 class_name VoxelWorld
 extends Node3D
-## Owns the voxel grid for the current floor: block data, block light, fluids,
-## chunk nodes, and edit ops.
+## INFINITE voxel world: unbounded X/Z in streamed 16×H×16 columns, generated
+## on demand by WorldGen (pure function of seed+column, so every peer's world
+## matches bit-for-bit). Mesh/collision exist only for columns near players;
+## data persists in memory once generated.
 ##
-## Determinism contract: ops are JSON-safe dicts replayed in log order on every
-## peer, and apply_op (including gravity cascade and fluid_step) is a pure
-## function of grid state — so seed + log always reproduces the same world.
-## Light is DERIVED state (recomputed locally per peer, never synced).
-##
-## Fluids are Minecraft-style: liquids (water/lava/acid) fall, then spread with
-## thinning levels and retract when cut off; lava ticks half-speed; lava+water
-## makes obsidian and steam; acid dissolves soft blocks. Gases (steam) rise and
-## dissipate. The server emits {"t":"fluid"} ops on a timer; each op advances
-## the simulation exactly one step on every peer.
+## Determinism contract (unchanged from the floor era): ops are JSON-safe
+## dicts replayed in log order; apply_op (gravity cascade, fluid_step) is a
+## pure function of grid state. Light is derived, local, never synced.
 
-const SX := 96
-const SY := 40
-const SZ := 96
+const H := WorldGen.H
 const CH := 16
-const MAX_LIGHT := 15
-const LIGHT_REPAIR_R := 14  # box radius for localized light rebuilds
+const SECTIONS := H / 16          # vertical mesh sections per column
+const STREAM_R := 3               # columns loaded around each player
+const LIGHT_REPAIR_R := 14
 
-## Block ids that area ops (explosions, transmutes) never overwrite.
 const PROTECTED := [Blocks.BEDROCK, Blocks.CHEST, Blocks.BENCH_SPELL,
 	Blocks.BENCH_ALCH, Blocks.BENCH_SKILL, Blocks.BENCH_SHOP, Blocks.PORTAL,
 	Blocks.BENCH_SMITH, Blocks.BENCH_ENCH]
@@ -30,42 +23,65 @@ const DIRS := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0),
 	Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
 const HORIZ := [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
 
-var data := PackedByteArray()
-var light := PackedByteArray()
-var chunks := {}       # Vector3i chunk coord -> {"mesh": MeshInstance3D, "shape": CollisionShape3D}
-var dirty := {}        # Vector3i chunk coord -> true
-var fluid_cells := {}  # int cell index -> true (active fluid/gas cells)
+var world_seed := 0
+var columns := {}      # Vector2i -> {"data": PBA, "light": PBA, "lit": bool}
+var chunks := {}       # Vector3i(cx, sy, cz) -> {"body","mesh","shape"} (streamed-in only)
+var dirty := {}        # Vector3i section keys
+var fluid_cells := {}  # Vector3i cell -> true (awake fluid/gas cells)
 var _fluid_steps := 0
+var _stream_accum := 0.0
 
 
 func _ready() -> void:
-	data.resize(SX * SY * SZ)
-	light.resize(SX * SY * SZ)
-	# Pre-warm the atlas + materials on the main thread before any worker
-	# touches them (lazy statics racing across threads = startup crash).
 	Blocks.material()
 	Blocks.material_translucent()
-	_create_chunk_nodes()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	flush_dirty(10)
+	_stream_accum += delta
+	if _stream_accum >= 0.4:
+		_stream_accum = 0.0
+		_stream_tick()
 
 
-# ---------------------------------------------------------------- basics
+# ---------------------------------------------------------------- columns
 
-func idx(x: int, y: int, z: int) -> int:
-	return (y * SZ + z) * SX + x
+static func column_key(x: int, z: int) -> Vector2i:
+	return Vector2i(int(floor(float(x) / 16.0)), int(floor(float(z) / 16.0)))
 
 
-func in_bounds(x: int, y: int, z: int) -> bool:
-	return x >= 0 and x < SX and y >= 0 and y < SY and z >= 0 and z < SZ
+## MAIN THREAD: generates the column if missing. Workers must never gen.
+func ensure_column(ck: Vector2i) -> Dictionary:
+	var col: Variant = columns.get(ck)
+	if col != null:
+		return col
+	var data := PackedByteArray()
+	data.resize(16 * H * 16)
+	WorldGen.fill_column(world_seed, ck, data)
+	var light := PackedByteArray()
+	light.resize(16 * H * 16)
+	var c := {"data": data, "light": light, "lit": false}
+	columns[ck] = c
+	# Wake any generated fluids (lakes settle after one step and sleep).
+	var bx := ck.x * 16
+	var bz := ck.y * 16
+	for i in range(data.size()):
+		if Blocks.fluid_kind(data[i]) != "":
+			fluid_cells[Vector3i(bx + (i % 16), i / 256, bz + ((i / 16) % 16))] = true
+	return c
 
 
 func get_block(x: int, y: int, z: int) -> int:
-	if not in_bounds(x, y, z):
+	if y < 0 or y >= H:
 		return Blocks.AIR
-	return data[idx(x, y, z)]
+	var ck := column_key(x, z)
+	var col: Variant = columns.get(ck)
+	if col == null:
+		if OS.get_thread_caller_id() != OS.get_main_thread_id():
+			return Blocks.AIR  # workers never generate
+		col = ensure_column(ck)
+	return col.data[(y * 16 + (z - ck.y * 16)) * 16 + (x - ck.x * 16)]
 
 
 func get_block_v(p: Vector3i) -> int:
@@ -73,29 +89,41 @@ func get_block_v(p: Vector3i) -> int:
 
 
 func light_at(x: int, y: int, z: int) -> int:
-	if not in_bounds(x, y, z):
-		return 0
-	return light[idx(x, y, z)]
+	if y < 0 or y >= H:
+		return 15 if y >= H else 0  # open sky above, void below
+	var ck := column_key(x, z)
+	var col: Variant = columns.get(ck)
+	if col == null:
+		return 8  # unloaded: assume dim so meshes at seams aren't black
+	return col.light[(y * 16 + (z - ck.y * 16)) * 16 + (x - ck.x * 16)]
+
+
+func _set_light(x: int, y: int, z: int, v: int) -> void:
+	var col: Variant = columns.get(column_key(x, z))
+	if col == null or y < 0 or y >= H:
+		return
+	var ck := column_key(x, z)
+	col.light[(y * 16 + (z - ck.y * 16)) * 16 + (x - ck.x * 16)] = v
 
 
 func set_block(x: int, y: int, z: int, id: int, mark := true) -> void:
-	if not in_bounds(x, y, z):
+	if y < 0 or y >= H:
 		return
-	var i := idx(x, y, z)
-	if data[i] == id:
+	var ck := column_key(x, z)
+	var col := ensure_column(ck)
+	var i := (y * 16 + (z - ck.y * 16)) * 16 + (x - ck.x * 16)
+	if col.data[i] == id:
 		return
-	data[i] = id
-	# Fluid bookkeeping: track this cell, wake sleeping fluid neighbors.
+	col.data[i] = id
+	var cell := Vector3i(x, y, z)
 	if Blocks.fluid_kind(id) != "":
-		fluid_cells[i] = true
+		fluid_cells[cell] = true
 	else:
-		fluid_cells.erase(i)
+		fluid_cells.erase(cell)
 	for d in DIRS:
-		var nx: int = x + d.x
-		var ny: int = y + d.y
-		var nz: int = z + d.z
-		if in_bounds(nx, ny, nz) and Blocks.fluid_kind(data[idx(nx, ny, nz)]) != "":
-			fluid_cells[idx(nx, ny, nz)] = true
+		var n: Vector3i = cell + d
+		if Blocks.fluid_kind(get_block(n.x, n.y, n.z)) != "":
+			fluid_cells[n] = true
 	if mark:
 		_mark_dirty(x, y, z)
 
@@ -109,57 +137,91 @@ func has_active_fluids() -> bool:
 
 
 func _mark_dirty(x: int, y: int, z: int) -> void:
-	var cc := Vector3i(x / CH, y / CH, z / CH)
-	dirty[cc] = true
-	if x % CH == 0: dirty[cc + Vector3i(-1, 0, 0)] = true
-	if x % CH == CH - 1: dirty[cc + Vector3i(1, 0, 0)] = true
-	if y % CH == 0: dirty[cc + Vector3i(0, -1, 0)] = true
-	if y % CH == CH - 1: dirty[cc + Vector3i(0, 1, 0)] = true
-	if z % CH == 0: dirty[cc + Vector3i(0, 0, -1)] = true
-	if z % CH == CH - 1: dirty[cc + Vector3i(0, 0, 1)] = true
+	var sk := Vector3i(int(floor(float(x) / 16.0)), y / 16, int(floor(float(z) / 16.0)))
+	dirty[sk] = true
+	if posmod(x, 16) == 0: dirty[sk + Vector3i(-1, 0, 0)] = true
+	if posmod(x, 16) == 15: dirty[sk + Vector3i(1, 0, 0)] = true
+	if y % 16 == 0 and sk.y > 0: dirty[sk + Vector3i(0, -1, 0)] = true
+	if y % 16 == 15 and sk.y < SECTIONS - 1: dirty[sk + Vector3i(0, 1, 0)] = true
+	if posmod(z, 16) == 0: dirty[sk + Vector3i(0, 0, -1)] = true
+	if posmod(z, 16) == 15: dirty[sk + Vector3i(0, 0, 1)] = true
 
 
-# ---------------------------------------------------------------- chunks
+# ---------------------------------------------------------------- streaming
 
-func _create_chunk_nodes() -> void:
-	for cx in range(SX / CH):
-		for cy in range(SY / CH):
-			for cz in range(SZ / CH):
-				var cc := Vector3i(cx, cy, cz)
+## Called by the streaming tick and by tests: load columns (data, light,
+## meshes) around the given world positions; drop far meshes (data stays).
+func stream_around(positions: Array) -> void:
+	var want := {}
+	for pos in positions:
+		var pck := column_key(int(pos.x), int(pos.z))
+		for dx in range(-STREAM_R, STREAM_R + 1):
+			for dz in range(-STREAM_R, STREAM_R + 1):
+				want[Vector2i(pck.x + dx, pck.y + dz)] = true
+	for ck in want:
+		var col := ensure_column(ck)
+		if not col.lit:
+			_light_column(ck)
+			col.lit = true
+		if not chunks.has(Vector3i(ck.x, 0, ck.y)):
+			for sy in range(SECTIONS):
+				var sk := Vector3i(ck.x, sy, ck.y)
 				var body := StaticBody3D.new()
-				body.name = "C_%d_%d_%d" % [cx, cy, cz]
-				body.position = Vector3(cc * CH)
+				body.name = "C_%d_%d_%d" % [ck.x, sy, ck.y]
+				body.position = Vector3(ck.x * 16, sy * 16, ck.y * 16)
 				body.add_to_group("voxel")
 				var mi := MeshInstance3D.new()
 				body.add_child(mi)
 				var cs := CollisionShape3D.new()
 				body.add_child(cs)
 				add_child(body)
-				chunks[cc] = {"mesh": mi, "shape": cs}
+				chunks[sk] = {"body": body, "mesh": mi, "shape": cs}
+				dirty[sk] = true
+	# Unload far meshes.
+	for sk in chunks.keys():
+		var ck2 := Vector2i(sk.x, sk.z)
+		var near := false
+		for pos in positions:
+			var pck2 := column_key(int(pos.x), int(pos.z))
+			if absi(ck2.x - pck2.x) <= STREAM_R + 2 and absi(ck2.y - pck2.y) <= STREAM_R + 2:
+				near = true
+				break
+		if not near:
+			chunks[sk].body.queue_free()
+			chunks.erase(sk)
+			dirty.erase(sk)
 
 
-func mark_all_dirty() -> void:
-	for cc in chunks:
-		dirty[cc] = true
+func _stream_tick() -> void:
+	var positions := []
+	var players := get_node_or_null("../Players")
+	if players != null:
+		for p in players.get_children():
+			positions.append(p.global_position)
+	if positions.is_empty():
+		positions.append(Vector3(0, WorldGen.TOWN_Y + 2, 0))
+	stream_around(positions)
 
 
-## Rebuilds are read-only over the grid, so a batch fans out across worker
-## threads (edits only happen between frames, never during the flush).
 func flush_dirty(budget: int) -> void:
 	if dirty.is_empty():
 		return
 	var batch: Array = []
-	var keys := dirty.keys()
-	for cc in keys:
+	for sk in dirty.keys():
 		if batch.size() >= budget:
 			break
-		dirty.erase(cc)
-		if chunks.has(cc):
-			batch.append(cc)
+		dirty.erase(sk)
+		if chunks.has(sk):
+			batch.append(sk)
 	if batch.is_empty():
 		return
+	# Pre-ensure neighbor columns on the main thread so workers never generate.
+	for sk in batch:
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				ensure_column(Vector2i(sk.x + dx, sk.z + dz))
 	if batch.size() == 1:
-		_rebuild_chunk(batch[0])
+		_apply_built(batch[0], Mesher.build(self, batch[0] * CH, CH))
 		return
 	var results := []
 	results.resize(batch.size())
@@ -167,12 +229,18 @@ func flush_dirty(budget: int) -> void:
 		results[i] = Mesher.build(self, batch[i] * CH, CH), batch.size(), -1, true)
 	WorkerThreadPool.wait_for_group_task_completion(task)
 	for i in range(batch.size()):
-		_apply_built(batch[i], results[i])
+		if chunks.has(batch[i]):
+			_apply_built(batch[i], results[i])
 
 
-## MAIN THREAD ONLY: turns worker-built arrays into mesh + collision.
-func _apply_built(cc: Vector3i, built: Dictionary) -> void:
-	var ch: Dictionary = chunks[cc]
+func flush_all() -> void:
+	while not dirty.is_empty():
+		flush_dirty(9999)
+
+
+## MAIN THREAD ONLY: worker-built arrays → mesh + collision.
+func _apply_built(sk: Vector3i, built: Dictionary) -> void:
+	var ch: Dictionary = chunks[sk]
 	ch.mesh.mesh = Mesher.make_mesh(built)
 	if built.faces.size() > 0:
 		var shape := ConcavePolygonShape3D.new()
@@ -182,97 +250,107 @@ func _apply_built(cc: Vector3i, built: Dictionary) -> void:
 		ch.shape.shape = null
 
 
-func flush_all() -> void:
-	while not dirty.is_empty():
-		flush_dirty(9999)
-
-
-func _rebuild_chunk(cc: Vector3i) -> void:
-	_apply_built(cc, Mesher.build(self, cc * CH, CH))
-
-
 # ---------------------------------------------------------------- lighting
-# Block light only (no sky underground): glow blocks emit 15, light decays 1
-# per cell through non-opaque space. Full rebuild at floor gen; localized
-# box repair (radius >= max light range shy of a hair) after edits.
+# Skylight pours straight down until the first opaque block; glow blocks emit
+# 15. BFS spreads through loaded columns only (seams brighten as areas load).
 
-func compute_light_full() -> void:
-	light.fill(0)
+func _light_column(ck: Vector2i) -> void:
+	var col: Dictionary = columns[ck]
+	var bx := ck.x * 16
+	var bz := ck.y * 16
 	var queue: Array = []
-	for i in range(data.size()):
-		if Blocks.get_def(data[i]).glow:
-			light[i] = MAX_LIGHT
-			queue.append(i)
+	for lx in range(16):
+		for lz in range(16):
+			for y in range(H - 1, -1, -1):
+				var id: int = col.data[(y * 16 + lz) * 16 + lx]
+				var def := Blocks.get_def(id)
+				if def.opaque:
+					if def.glow:
+						col.light[(y * 16 + lz) * 16 + lx] = 15
+						queue.append(Vector3i(bx + lx, y, bz + lz))
+					break
+				col.light[(y * 16 + lz) * 16 + lx] = 15
+				queue.append(Vector3i(bx + lx, y, bz + lz))
+			# glow blocks below the skylight line
+			for y in range(H):
+				var id2: int = col.data[(y * 16 + lz) * 16 + lx]
+				if Blocks.get_def(id2).glow and col.light[(y * 16 + lz) * 16 + lx] < 15:
+					col.light[(y * 16 + lz) * 16 + lx] = 15
+					queue.append(Vector3i(bx + lx, y, bz + lz))
 	_propagate(queue)
 
 
 func _propagate(queue: Array) -> void:
 	var head := 0
 	while head < queue.size():
-		var i: int = queue[head]
+		var c: Vector3i = queue[head]
 		head += 1
-		var lv := int(light[i]) - 1
+		var lv := light_at(c.x, c.y, c.z) - 1
 		if lv <= 0:
 			continue
-		var x := i % SX
-		var z := (i / SX) % SZ
-		var y := i / (SX * SZ)
 		for d in DIRS:
-			var nx: int = x + d.x
-			var ny: int = y + d.y
-			var nz: int = z + d.z
-			if not in_bounds(nx, ny, nz):
+			var n: Vector3i = c + d
+			if n.y < 0 or n.y >= H or not columns.has(column_key(n.x, n.z)):
 				continue
-			var ni := idx(nx, ny, nz)
-			if int(light[ni]) >= lv:
+			if light_at(n.x, n.y, n.z) >= lv:
 				continue
-			var ndef := Blocks.get_def(data[ni])
+			var ndef := Blocks.get_def(get_block(n.x, n.y, n.z))
 			if ndef.opaque and not ndef.glow:
 				continue
-			light[ni] = lv
-			queue.append(ni)
+			_set_light(n.x, n.y, n.z, lv)
+			queue.append(n)
 
 
-## Recompute light in a box around an edit: zero it, reseed from glow cells
-## inside and true values on the boundary shell, re-propagate, and re-mesh
-## only the chunks whose light actually changed.
+## Localized rebuild after an edit: re-derive skylight + glow inside a box,
+## reseed from its shell, re-propagate; only changed sections re-mesh.
 func repair_light(center: Vector3i, extra := 0) -> void:
 	var r := LIGHT_REPAIR_R + extra
-	var mn := Vector3i(maxi(center.x - r, 0), maxi(center.y - r, 0), maxi(center.z - r, 0))
-	var mx := Vector3i(mini(center.x + r, SX - 1), mini(center.y + r, SY - 1), mini(center.z + r, SZ - 1))
+	var mn := Vector3i(center.x - r, maxi(center.y - r, 0), center.z - r)
+	var mx := Vector3i(center.x + r, mini(center.y + r, H - 1), center.z + r)
 	var old := {}
 	var queue: Array = []
-	for y in range(mn.y, mx.y + 1):
+	for x in range(mn.x, mx.x + 1):
 		for z in range(mn.z, mx.z + 1):
-			for x in range(mn.x, mx.x + 1):
-				var i := idx(x, y, z)
-				old[i] = int(light[i])
-				light[i] = 0
-				if Blocks.get_def(data[i]).glow:
-					light[i] = MAX_LIGHT
-					queue.append(i)
-	# Boundary shell: cells just outside the box shine back in.
-	for y in range(mn.y - 1, mx.y + 2):
+			if not columns.has(column_key(x, z)):
+				continue
+			# Skylight within the box: open to sky if nothing opaque above box.
+			var sky := true
+			for y in range(mx.y + 1, H):
+				if Blocks.get_def(get_block(x, y, z)).opaque:
+					sky = false
+					break
+			for y in range(mx.y, mn.y - 1, -1):
+				var c := Vector3i(x, y, z)
+				old[c] = light_at(x, y, z)
+				var def := Blocks.get_def(get_block(x, y, z))
+				var lv := 0
+				if def.glow:
+					lv = 15
+				elif sky and not def.opaque:
+					lv = 15
+				if def.opaque and not def.glow:
+					sky = false
+				_set_light(x, y, z, lv)
+				if lv > 1:
+					queue.append(c)
+	# Shell reseed.
+	for x in range(mn.x - 1, mx.x + 2):
 		for z in range(mn.z - 1, mx.z + 2):
-			for x in range(mn.x - 1, mx.x + 2):
-				var inside: bool = x >= mn.x and x <= mx.x and y >= mn.y and y <= mx.y \
-					and z >= mn.z and z <= mx.z
-				if inside or not in_bounds(x, y, z):
-					continue
-				if int(light[idx(x, y, z)]) > 1:
-					queue.append(idx(x, y, z))
+			for y in range(maxi(mn.y - 1, 0), mini(mx.y + 1, H - 1) + 1):
+				var inside: bool = x >= mn.x and x <= mx.x and z >= mn.z and z <= mx.z \
+					and y >= mn.y and y <= mx.y
+				if not inside and columns.has(column_key(x, z)) \
+						and light_at(x, y, z) > 1:
+					queue.append(Vector3i(x, y, z))
 	_propagate(queue)
-	for i in old:
-		if int(light[i]) != int(old[i]):
-			var x := int(i) % SX
-			var z := (int(i) / SX) % SZ
-			var y := int(i) / (SX * SZ)
-			dirty[Vector3i(x / CH, y / CH, z / CH)] = true
+	for c in old:
+		if light_at(c.x, c.y, c.z) != int(old[c]):
+			dirty[Vector3i(int(floor(float(c.x) / 16.0)), c.y / 16,
+				int(floor(float(c.z) / 16.0)))] = true
 
 
 # ---------------------------------------------------------------- ops
 
-## Applies one JSON-safe edit op. Deterministic across peers.
 func apply_op(op: Dictionary) -> void:
 	if String(op.t) == "fluid":
 		fluid_step()
@@ -314,8 +392,6 @@ func apply_op(op: Dictionary) -> void:
 						set_block(x, y, z, int(op.b))
 			light_extra = maxi(q.x - p.x, maxi(q.y - p.y, q.z - p.z))
 		"box_replace":
-			# Only converts `from` cells — crushers sweep through air without
-			# chewing permanent holes in the architecture.
 			var q2 := Vector3i(int(op.q[0]), int(op.q[1]), int(op.q[2]))
 			var from_id := int(op.from)
 			for x in range(p.x, q2.x + 1):
@@ -342,9 +418,6 @@ func _sphere(c: Vector3i, r: float, b: int, only_from: Array) -> void:
 				var cur := get_block(x, y, z)
 				if cur in PROTECTED:
 					continue
-				# Unbreakable-by-hand blocks survive area magic unless flagged
-				# magic_break (locked doors, fluids). Walls/floors/ceilings are
-				# ordinary blocks and always yield to spells.
 				var cdef := Blocks.get_def(cur)
 				if cur != Blocks.AIR and cdef.hard < 0.0 and not cdef.get("magic_break", false):
 					continue
@@ -357,15 +430,14 @@ func _sphere(c: Vector3i, r: float, b: int, only_from: Array) -> void:
 					if not ok:
 						continue
 				elif b != Blocks.AIR and cur != Blocks.AIR:
-					continue  # plain fill only writes into empty space
+					continue
 				set_block(x, y, z, b)
 
 
-## Gravity cascade for falls-type blocks in an AABB — deterministic scan order.
 func _resolve_falls(mn: Vector3i, mx: Vector3i) -> void:
-	for x in range(maxi(mn.x, 0), mini(mx.x, SX - 1) + 1):
-		for z in range(maxi(mn.z, 0), mini(mx.z, SZ - 1) + 1):
-			for y in range(maxi(mn.y, 1), SY):
+	for x in range(mn.x, mx.x + 1):
+		for z in range(mn.z, mx.z + 1):
+			for y in range(maxi(mn.y, 1), H):
 				var id := get_block(x, y, z)
 				if not Blocks.get_def(id).falls:
 					continue
@@ -379,59 +451,53 @@ func _resolve_falls(mn: Vector3i, mx: Vector3i) -> void:
 
 # ---------------------------------------------------------------- fluid sim
 
-## One deterministic simulation step over all awake fluid/gas cells, in sorted
-## cell order. Cells that do nothing go back to sleep (set_block re-wakes them).
 func fluid_step() -> void:
 	_fluid_steps += 1
-	var idxs := fluid_cells.keys()
-	idxs.sort()
+	var cells := fluid_cells.keys()
+	cells.sort()
 	var glow_touched := false
-	var bounds_mn := Vector3i(SX, SY, SZ)
-	var bounds_mx := Vector3i(-1, -1, -1)
-	for i in idxs:
-		var id: int = data[i]
+	var bounds_mn := Vector3i(1 << 30, 1 << 30, 1 << 30)
+	var bounds_mx := Vector3i(-(1 << 30), -(1 << 30), -(1 << 30))
+	for c in cells:
+		var id := get_block(c.x, c.y, c.z)
 		var kind := Blocks.fluid_kind(id)
 		if kind == "":
-			fluid_cells.erase(i)
+			fluid_cells.erase(c)
 			continue
-		var x := int(i) % SX
-		var z := (int(i) / SX) % SZ
-		var y := int(i) / (SX * SZ)
 		var changed: bool
 		if Blocks.is_gas(id):
-			changed = _step_gas(x, y, z, id)
+			changed = _step_gas(c.x, c.y, c.z, id)
 		else:
 			if kind == "lava" and _fluid_steps % 2 == 1:
-				continue  # lava is sluggish
-			changed = _step_liquid(x, y, z, id, kind)
+				continue
+			changed = _step_liquid(c.x, c.y, c.z, id, kind)
 		if changed:
 			if Blocks.get_def(id).glow:
 				glow_touched = true
-			bounds_mn = Vector3i(mini(bounds_mn.x, x), mini(bounds_mn.y, y), mini(bounds_mn.z, z))
-			bounds_mx = Vector3i(maxi(bounds_mx.x, x), maxi(bounds_mx.y, y), maxi(bounds_mx.z, z))
+			bounds_mn = Vector3i(mini(bounds_mn.x, c.x), mini(bounds_mn.y, c.y), mini(bounds_mn.z, c.z))
+			bounds_mx = Vector3i(maxi(bounds_mx.x, c.x), maxi(bounds_mx.y, c.y), maxi(bounds_mx.z, c.z))
 		else:
-			fluid_cells.erase(i)  # settled; neighbors will wake it if needed
-	if glow_touched and bounds_mx.x >= 0:
-		var c := (bounds_mn + bounds_mx) / 2
-		repair_light(c, maxi(bounds_mx.x - bounds_mn.x, maxi(bounds_mx.y - bounds_mn.y, bounds_mx.z - bounds_mn.z)) / 2)
+			fluid_cells.erase(c)
+	if glow_touched and bounds_mx.x > -(1 << 29):
+		var c2 := (bounds_mn + bounds_mx) / 2
+		repair_light(c2, maxi(bounds_mx.x - bounds_mn.x,
+			maxi(bounds_mx.y - bounds_mn.y, bounds_mx.z - bounds_mn.z)) / 2)
 
 
 func _step_gas(x: int, y: int, z: int, id: int) -> bool:
 	var lvl := Blocks.fluid_level(id)
-	# Steam rises...
-	if get_block(x, y + 1, z) == Blocks.AIR:
+	if get_block(x, y + 1, z) == Blocks.AIR and y + 1 < H:
 		set_block(x, y, z, Blocks.AIR)
 		set_block(x, y + 1, z, id)
 		return true
-	# ...seeps sideways under ceilings...
 	for d in HORIZ:
-		if get_block(x + d.x, y, z + d.z) == Blocks.AIR and get_block(x + d.x, y + 1, z + d.z) != Blocks.AIR:
+		if get_block(x + d.x, y, z + d.z) == Blocks.AIR \
+				and get_block(x + d.x, y + 1, z + d.z) != Blocks.AIR:
 			if _det_chance(x, y, z, 2):
 				set_block(x, y, z, Blocks.AIR)
-				set_block(x + d.x, y, z + d.z, Blocks.fluid_id("steam", maxi(lvl - 1, 1)))
+				set_block(x + d.x, y, z + d.z, Blocks.fluid_id(String(Blocks.get_def(id).gas), maxi(lvl - 1, 1)))
 				return true
-	# ...and dissipates.
-	set_block(x, y, z, Blocks.fluid_id("steam", lvl - 1))  # level 0 -> AIR
+	set_block(x, y, z, Blocks.fluid_id(String(Blocks.get_def(id).gas), lvl - 1))
 	return true
 
 
@@ -440,8 +506,6 @@ func _step_liquid(x: int, y: int, z: int, id: int, kind: String) -> bool:
 	var maxlvl := Blocks.fluid_max(kind)
 	var is_source := lvl == maxlvl
 	var changed := false
-
-	# Lava + water = obsidian, and steam boils off above.
 	if kind == "lava":
 		for d in DIRS:
 			if Blocks.fluid_kind(get_block(x + d.x, y + d.y, z + d.z)) == "water":
@@ -450,39 +514,31 @@ func _step_liquid(x: int, y: int, z: int, id: int, kind: String) -> bool:
 					set_block(x + d.x, y + d.y + 1, z + d.z, Blocks.STEAM_3)
 				set_block(x, y, z, Blocks.OBSIDIAN if is_source else Blocks.AIR)
 				return true
-
-	# Acid eats soft blocks around it — and stays awake while any remain.
 	if kind == "acid":
 		for d in DIRS:
 			var nid := get_block(x + d.x, y + d.y, z + d.z)
 			if nid in Blocks.DISSOLVES:
-				changed = true  # keep gnawing next step even if this roll fails
+				changed = true
 				if _det_chance(x + d.x, y + d.y, z + d.z, 3):
 					set_block(x + d.x, y + d.y, z + d.z, Blocks.AIR)
-
-	# Fall.
 	var below := get_block(x, y - 1, z)
-	if below == Blocks.AIR:
+	if below == Blocks.AIR and y > 0:
 		set_block(x, y - 1, z, Blocks.fluid_id(kind, maxi(maxlvl - 1, 1)))
 		if not is_source:
 			set_block(x, y, z, Blocks.AIR)
 		return true
-
-	# Retract when cut off from anything stronger.
 	if not is_source:
 		var fed := false
 		if Blocks.fluid_kind(get_block(x, y + 1, z)) == kind:
 			fed = true
 		for d in HORIZ:
-			var nid := get_block(x + d.x, y, z + d.z)
-			if Blocks.fluid_kind(nid) == kind and Blocks.fluid_level(nid) > lvl:
+			var nid2 := get_block(x + d.x, y, z + d.z)
+			if Blocks.fluid_kind(nid2) == kind and Blocks.fluid_level(nid2) > lvl:
 				fed = true
 				break
 		if not fed:
-			set_block(x, y, z, Blocks.fluid_id(kind, lvl - 1))  # level 0 -> AIR
+			set_block(x, y, z, Blocks.fluid_id(kind, lvl - 1))
 			return true
-
-	# Spread.
 	if lvl > 1:
 		for d in HORIZ:
 			if get_block(x + d.x, y, z + d.z) == Blocks.AIR:
@@ -491,8 +547,5 @@ func _step_liquid(x: int, y: int, z: int, id: int, kind: String) -> bool:
 	return changed
 
 
-## Deterministic pseudo-chance (1 in 2^bits) tied to cell + step counter, so
-## every peer replaying the op stream rolls identically.
 func _det_chance(x: int, y: int, z: int, bits: int) -> bool:
-	var h := hash(Vector4i(x, y, z, _fluid_steps))
-	return (h & ((1 << bits) - 1)) == 0
+	return (hash(Vector4i(x, y, z, _fluid_steps)) & ((1 << bits) - 1)) == 0

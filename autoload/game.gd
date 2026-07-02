@@ -130,8 +130,7 @@ func sv_register(pname: String, chr := {}) -> void:
 		# Late join: give them everything they need to build the floor.
 		lobby[pid] = {"name": pname, "class_id": cls, "chr": chr}
 		players[pid] = _record_for(pid, pname, cls, chr)
-		rpc_id(pid, "cl_begin_run", run_seed, players, floor_num,
-			edit_log if floor_num != 0 else [], town_log)
+		rpc_id(pid, "cl_begin_run", run_seed, players, 0, edit_log, [])
 		rpc("cl_sync_player", pid, players[pid])
 	else:
 		lobby[pid] = {"name": pname, "class_id": cls, "chr": chr}
@@ -463,9 +462,8 @@ func request_start_run() -> void:
 	# Restore a save if one was queued from the menu.
 	if not pending_load.is_empty():
 		run_seed = int(pending_load.seed)
-		floor_num = int(pending_load.floor_num)
-		town_log = pending_load.get("town_log", [])
-		edit_log = pending_load.get("edit_log", [])
+		floor_num = 0
+		edit_log = pending_load.get("town_log", []) + pending_load.get("edit_log", [])
 		threat = float(pending_load.get("threat", 1.0))
 		loot_rule = String(pending_load.get("loot_rule", loot_rule))
 		town_chests = pending_load.get("town_chests", {})
@@ -500,22 +498,31 @@ func request_start_run() -> void:
 		pending_load = {}
 	else:
 		edit_log = []
-	rpc("cl_begin_run", run_seed, players, floor_num,
-		edit_log if floor_num != 0 else [], town_log)
+	rpc("cl_begin_run", run_seed, players, 0, edit_log, [])
 
 
 @rpc("authority", "call_local", "reliable")
-func cl_begin_run(seed_v: int, precords: Dictionary, fnum: int, ops: Array, town_ops: Array) -> void:
+func cl_begin_run(seed_v: int, precords: Dictionary, _fnum: int, ops: Array, _town_ops: Array) -> void:
 	run_seed = seed_v
-	floor_num = fnum
+	floor_num = 0
 	players = precords
-	town_log = town_ops
-	edit_log = ops if fnum != 0 else town_ops
+	town_log = []
+	edit_log = ops
 	in_run = true
 	if is_server():
 		_floor_ready = {}
 		_floor_barrier_open = false
 	Events.run_started.emit()  # main.gd builds the world node → world_registered()
+
+
+## World-space anchor: everyone spawns on the town plaza at the origin.
+func spawn_point() -> Vector3:
+	return Vector3(0.5, float(WorldGen.surface_y(run_seed, 0, 0)) + 1.6, 0.5)
+
+
+func player_band(pid: int) -> int:
+	var p = world.get_player(pid) if world != null else null
+	return Db.band_at(p.global_position.y) if p != null else 0
 
 
 ## scenes/world.gd calls this from _ready once its nodes exist.
@@ -525,13 +532,18 @@ func world_registered(w, vw: VoxelWorld) -> void:
 	_local_load_floor()
 
 
+## Infinite world boot: seed the generator, replay every edit ever made (this
+## regenerates exactly the columns those edits touched), stream in the spawn
+## area, and report ready.
 func _local_load_floor() -> void:
-	gen_info = DungeonGenerator.generate(voxel, run_seed, floor_num)
-	var log_now: Array = town_log if floor_num == 0 else edit_log
-	for op in log_now:
+	voxel.world_seed = run_seed
+	WorldGen.setup(run_seed)
+	for op in edit_log:
 		voxel.apply_op(op)
+	voxel.stream_around([spawn_point()])
 	voxel.flush_all()
-	Events.floor_loaded.emit(floor_num)
+	gen_info = {"spawn": spawn_point()}
+	Events.floor_loaded.emit(0)
 	if is_server():
 		sv_floor_ready()
 	else:
@@ -566,80 +578,45 @@ func _all_ready_consumed() -> bool:
 
 
 func _server_populate_floor() -> void:
-	# Spawn every player around the floor spawn point.
+	# Spawn every player around the town plaza; the world spawner handles
+	# mobs from here on — no floors, no portals, just depth.
 	var base: Vector3 = gen_info.spawn
 	var i := 0
 	for pid in players:
 		var pos := base + Vector3((i % 2) * 1.2, 0, (i / 2) * 1.2)
 		rpc("cl_spawn_player", pid, pos)
 		i += 1
-	# Enemies.
-	enemies = {}
-	pickups = {}
-	if floor_num > 0:
-		var rng := RandomNumberGenerator.new()
-		rng.seed = DungeonGenerator.floor_seed(run_seed, floor_num) ^ 0xBEEF
-		var spawns: Array = gen_info.enemy_spawns.duplicate()
-		var count: int = clampi(int((3 + floor_num) * threat) + int(party().n) - 1,
-			3, mini(24, spawns.size()))
-		for j in range(count):
-			if spawns.is_empty():
-				break
-			var s: Vector3 = spawns.pop_at(rng.randi_range(0, spawns.size() - 1))
-			_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat), s)
-		if gen_info.has_boss and gen_info.boss_spawn != null:
-			_server_spawn_enemy(Db.boss_for(String(gen_info.get("biome", "delve")), floor_num),
-				gen_info.boss_spawn)
-		# Ambient life: animals to hunt, the occasional lost explorer.
-		var ambient := rng.randi_range(2, 4)
-		for j in range(ambient):
-			if spawns.is_empty():
-				break
-			var atype := Db.pick_ambient_type(rng, floor_num)
-			if atype == "":
-				break
-			var s2: Vector3 = spawns.pop_at(rng.randi_range(0, spawns.size() - 1))
-			_server_spawn_enemy(atype, s2)
-		var biome_lines := {
-			"delve": "worked stone and old torch smoke",
-			"caverns": "wild caverns — the walls were never carved",
-			"lakes": "black water — pack kelp and hold your breath",
-			"molten": "molten depths — the air itself sears",
-		}
-		rpc("cl_notify", "Floor %d: %s." % [floor_num,
-			biome_lines.get(String(gen_info.get("biome", "delve")), "something stirs in the dark")])
-		# Populate the hamlet, if the floor has one.
-		var settle: Dictionary = gen_info.get("settlement", {})
-		if not settle.is_empty():
-			var sspawns: Array = settle.spawns
-			match String(settle.type):
-				"allied":
-					for s in sspawns.slice(0, 3):
-						_server_spawn_enemy("villager", s)
-					_server_spawn_enemy("town_guardian", sspawns[3])
-					rpc("cl_notify", "Lantern light ahead — an allied hamlet trades here.")
-				"cozy":
-					for s in sspawns.slice(0, 3):
-						_server_spawn_enemy("villager", s)
-					rpc("cl_notify", "Warm smoke rises — a cozy hamlet welcomes travelers.")
-				"hostile":
-					for s in sspawns:
-						_server_spawn_enemy("bandit", s)
-					rpc("cl_notify", "A palisade of stolen goods — BANDITS hold this hamlet.")
-				"ghost":
-					for s in sspawns.slice(0, 3):
-						_server_spawn_enemy("gloom_ghost", s)
-					rpc("cl_notify", "Empty streets, cold hearths... a ghost town. Something still walks it.")
-	else:
-		# Town: citizens mill about the plaza, a hog roots by the garden.
-		for j in range(3):
-			_server_spawn_enemy("refuge_citizen", base + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10)))
-		_server_spawn_enemy("gloom_hog", base + Vector3(-14, 0, -4))
-		# Recruited villagers live here now.
-		for j in range(mini(town_pop, 8)):
-			_server_spawn_enemy("villager", base + Vector3(randf_range(-12, 12), 0, randf_range(-12, 12)))
-		rpc("cl_notify", "Welcome to the Gilded Refuge. The portal waits south.")
-	# Loyal pets step out of the portal after their owners.
+	_register_town_features()
+	rpc("cl_notify", "Welcome to the Gilded Refuge. The Deep is under your feet — dig.")
+	return
+
+
+## The town's fixed furniture is part of deterministic gen, not the edit log —
+## register it (camps, crops, the waystone) and seed the plaza's citizens.
+func _register_town_features() -> void:
+	camps = {}
+	crops = {}
+	waystones = {}
+	var feats := WorldGen.town_features()
+	for p in feats:
+		var v: Vector3i = p
+		var key := "%d,%d,%d" % [v.x, v.y, v.z]
+		match int(feats[p]):
+			Blocks.CAMPFIRE:
+				camps[key] = Vector3(v) + Vector3(0.5, 0.5, 0.5)
+			Blocks.CROP_1, Blocks.CROP_2:
+				crops[key] = v
+			Blocks.WAYSTONE:
+				waystones[key] = {"pos": Vector3(v) + Vector3(0, 1, 0), "name": "Town Waystone"}
+	for ck in town_chests:
+		chest_store[ck] = town_chests[ck]
+	rpc("cl_waystones", waystones)
+	# Citizens, recruits, a hog by the pond — and pets rejoining their owners.
+	var base: Vector3 = gen_info.spawn
+	for j in range(3 + mini(town_pop, 8)):
+		_server_spawn_enemy("refuge_citizen" if j < 3 else "villager",
+			base + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10)))
+	_server_spawn_enemy("gloom_hog", base + Vector3(9, 0, 6))
 	for pet in _carry_pets:
 		_server_spawn_enemy(String(pet.type), base + Vector3(randf_range(-2, 2), 0.5, randf_range(-2, 2)))
 		var new_eid := _next_eid - 1
@@ -648,35 +625,6 @@ func _server_populate_floor() -> void:
 		enemies[new_eid].name = String(pet.name)
 		rpc("cl_tame", new_eid, String(pet.name), int(pet.owner))
 	_carry_pets = []
-	_scan_floor_features()
-
-
-## Server: find gen-placed campfires and growing crops (they are part of the
-## deterministic floor, not the edit log, so we discover them by scanning).
-func _scan_floor_features() -> void:
-	camps = {}
-	crops = {}
-	waystones = {}
-	for y in range(VoxelWorld.SY):
-		for z in range(VoxelWorld.SZ):
-			for x in range(VoxelWorld.SX):
-				var id: int = voxel.data[(y * VoxelWorld.SZ + z) * VoxelWorld.SX + x]
-				if id == Blocks.CAMPFIRE:
-					camps["%d,%d,%d" % [x, y, z]] = Vector3(x + 0.5, y + 0.5, z + 0.5)
-				elif id == Blocks.CROP_1 or id == Blocks.CROP_2:
-					crops["%d,%d,%d" % [x, y, z]] = Vector3i(x, y, z)
-				elif id == Blocks.WAYSTONE:
-					waystones["%d,%d,%d" % [x, y, z]] = {"pos": Vector3(x, y + 1, z),
-						"name": "Town Waystone"}
-				elif id == Blocks.CHEST_STORE:
-					var ck := "%d,%d,%d" % [x, y, z]
-					if not chest_store.has(ck):
-						chest_store[ck] = []
-	if floor_num == 0:
-		# Restore persistent town storage into the rediscovered chests.
-		for ck in town_chests:
-			chest_store[ck] = town_chests[ck]
-	rpc("cl_waystones", waystones)
 
 
 func _spawn_one_late(pid: int) -> void:
@@ -717,35 +665,77 @@ var _carry_pets: Array = []  # tamed companions ride along between floors
 var town_pop := 0            # villagers recruited to the Refuge (persisted)
 
 
-func _server_descend() -> void:
-	if floor_num == 0:
-		town_log = edit_log if floor_num == 0 else town_log
-		town_chests = chest_store  # town storage persists across the run
-	chest_store = {}
-	_carry_pets = []
-	for eid in enemies:
-		var e: Dictionary = enemies[eid]
-		if e.alive and bool(e.get("tamed", false)):
-			_carry_pets.append({"type": e.type, "name": e.name, "owner": int(e.owner_pid)})
-	save_now()
-	_descending = false
-	floor_num += 1
-	edit_log = []
-	enemies = {}
-	pickups = {}
-	encounters.clear()
-	_floor_ready = {}
-	_floor_barrier_open = false
-	rpc("cl_change_floor", floor_num, [])
+# (Floors are history: the world is one infinite volume. Descending is
+# digging; town storage lives in the same edit log as everything else.)
+
+## Server world spawner: keeps mob pressure around every player, scaled to
+## the DEPTH they're at. Runs on a slow cadence; despawns strays.
+var _spawner_accum := 0.0
+
+func _server_tick_spawner() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for pid in players:
+		var p = world.get_player(pid)
+		if p == null:
+			continue
+		var band := Db.band_at(p.global_position.y)
+		var nearby := 0
+		var boss_alive := false
+		for eid in enemies:
+			var e: Dictionary = enemies[eid]
+			if not e.alive:
+				continue
+			if bool(e.get("boss", false)):
+				boss_alive = true
+			if String(e.get("disp", "hostile")) == "hostile" \
+					and Vector3(e.pos).distance_to(p.global_position) < 48.0:
+				nearby += 1
+		var want: int = (1 if band == 0 else 3 + band) + int(party().n) / 2
+		if nearby >= want:
+			continue
+		var pos := _find_spawn_spot(p.global_position, rng)
+		if pos == Vector3.ZERO:
+			continue
+		if band >= 3 and not boss_alive and rng.randf() < 0.05:
+			_server_spawn_enemy(Db.boss_for("delve", band * 7), pos)
+			rpc("cl_notify", "The Deep shudders — something ENORMOUS stirs nearby...")
+		elif rng.randf() < 0.2:
+			var at := Db.pick_ambient_type(rng, maxi(band, 1))
+			if at != "":
+				_server_spawn_enemy(at, pos)
+		elif band > 0 or rng.randf() < 0.25:
+			_server_spawn_enemy(Db.pick_enemy_type(rng, maxi(band, 1), threat), pos)
+	# Despawn strays far from everyone (never pets).
+	for eid in enemies.keys():
+		var e2: Dictionary = enemies[eid]
+		if not e2.alive or bool(e2.get("tamed", false)) or bool(e2.get("boss", false)):
+			continue
+		var near := false
+		for pid2 in players:
+			var p2 = world.get_player(pid2)
+			if p2 != null and p2.global_position.distance_to(Vector3(e2.pos)) < 90.0:
+				near = true
+				break
+		if not near:
+			e2.alive = false
+			rpc("cl_despawn_enemy", eid)
 
 
-@rpc("authority", "call_local", "reliable")
-func cl_change_floor(fnum: int, ops: Array) -> void:
-	floor_num = fnum
-	edit_log = ops
-	if world != null:
-		world.clear_entities()
-		_local_load_floor()
+## A standable air pocket 14-26 blocks out, near the player's depth.
+func _find_spawn_spot(around: Vector3, rng: RandomNumberGenerator) -> Vector3:
+	for attempt in range(6):
+		var a := rng.randf() * TAU
+		var dist := rng.randf_range(14.0, 26.0)
+		var x := int(around.x + cos(a) * dist)
+		var z := int(around.z + sin(a) * dist)
+		var top := clampi(int(around.y) + 6, 2, WorldGen.H - 3)
+		for y in range(top, maxi(int(around.y) - 10, 1), -1):
+			if voxel.get_block(x, y, z) == Blocks.AIR \
+					and voxel.get_block(x, y + 1, z) == Blocks.AIR \
+					and Blocks.is_solid(voxel.get_block(x, y - 1, z)):
+				return Vector3(x + 0.5, float(y) + 0.5, z + 0.5)
+	return Vector3.ZERO
 
 
 # ================================================================ voxel edits
@@ -848,8 +838,6 @@ func _within_reach(pid: int, p: Array) -> bool:
 ## Server-side: record + broadcast + apply an op everywhere.
 func _apply_edit(op: Dictionary) -> void:
 	edit_log.append(op)
-	if floor_num == 0:
-		town_log = edit_log
 	# Track camps and crops as they're placed/destroyed.
 	if String(op.t) == "set":
 		var key := "%d,%d,%d" % [int(op.p[0]), int(op.p[1]), int(op.p[2])]
@@ -873,7 +861,7 @@ func _apply_edit(op: Dictionary) -> void:
 			chest_store.erase(key)
 		if b == Blocks.WAYSTONE:
 			waystones[key] = {"pos": Vector3(int(op.p[0]), int(op.p[1]) + 1, int(op.p[2])),
-				"name": "Waystone %d·%d" % [floor_num, waystones.size() + 1]}
+				"name": "Waystone %d" % (waystones.size() + 1)}
 			rpc("cl_waystones", waystones)
 		elif waystones.has(key):
 			waystones.erase(key)
@@ -1052,8 +1040,9 @@ func sv_use(slot: int, target: Vector3) -> void:
 			_consume(rec, slot, 1)
 			var rng := RandomNumberGenerator.new()
 			rng.randomize()
-			var drops: Array = Db.roll_loot(rng, floor_num + 2, eff_luck(rec), float(rec.passives.get("loot_bonus", 0.0)) + 0.3)
-			var gold_win := rng.randi_range(20, 60 + floor_num * 15)
+			var cband := player_band(pid)
+			var drops: Array = Db.roll_loot(rng, cband + 2, eff_luck(rec), float(rec.passives.get("loot_bonus", 0.0)) + 0.3)
+			var gold_win := rng.randi_range(20, 60 + cband * 15)
 			rec.gold += gold_win
 			for d in drops:
 				give_item(pid, d.id, d.count, d.meta)
@@ -1291,7 +1280,7 @@ func sv_shop(action: String, idx: int) -> void:
 	if rec.is_empty():
 		return
 	if action == "buy":
-		var stock: Array = Db.shop_stock(run_seed, floor_num)
+		var stock: Array = Db.shop_stock(run_seed, player_band(pid))
 		if idx < 0 or idx >= stock.size():
 			return
 		var offer: Dictionary = stock[idx]
@@ -1333,11 +1322,7 @@ func sv_interact(kind: String, p: Array) -> void:
 	var bid: int = voxel.get_block(int(p[0]), int(p[1]), int(p[2]))
 	match kind:
 		"portal":
-			if bid != Blocks.PORTAL or _descending:
-				return
-			_descending = true
-			rpc("cl_notify", "%s pulls the lever — descending in 4..." % players[pid].name)
-			get_tree().create_timer(4.0).timeout.connect(_server_descend)
+			return  # extinct: the world is seamless — dig to descend
 		"chest":
 			if bid != Blocks.CHEST:
 				return
@@ -1345,10 +1330,11 @@ func sv_interact(kind: String, p: Array) -> void:
 			var rec: Dictionary = players[pid]
 			var rng := RandomNumberGenerator.new()
 			rng.randomize()
-			var gold_win := rng.randi_range(10, 30 + floor_num * 10)
+			var chband := Db.band_at(float(p[1]))
+			var gold_win := rng.randi_range(10, 30 + chband * 10)
 			reward_gold(pid, gold_win)
 			var at := Vector3(int(p[0]) + 0.5, int(p[1]) + 1.2, int(p[2]) + 0.5)
-			for d in Db.roll_loot(rng, floor_num, eff_luck(rec), float(rec.passives.get("loot_bonus", 0.0))):
+			for d in Db.roll_loot(rng, chband, eff_luck(rec), float(rec.passives.get("loot_bonus", 0.0))):
 				server_spawn_pickup(at + Vector3(rng.randf_range(-0.8, 0.8), 0,
 					rng.randf_range(-0.8, 0.8)), d, _next_loot_owner())
 			rpc("cl_notify", "%s cracks a Gambit Chest (+%d gold)." % [rec.name, gold_win])
@@ -1362,8 +1348,8 @@ func sv_interact(kind: String, p: Array) -> void:
 			rpc("cl_notify", "%s springs a trapped chest — gas erupts!" % players[pid].name)
 			var rng3 := RandomNumberGenerator.new()
 			rng3.randomize()
-			reward_gold(pid, rng3.randi_range(15, 40 + floor_num * 12))
-			for d in Db.roll_loot(rng3, floor_num, eff_luck(players[pid]), 0.3):
+			reward_gold(pid, rng3.randi_range(15, 40 + Db.band_at(float(p[1])) * 12))
+			for d in Db.roll_loot(rng3, Db.band_at(float(p[1])), eff_luck(players[pid]), 0.3):
 				give_item(pid, d.id, d.count, d.meta)
 		"door":
 			var has_key := _has_item(players[pid], "golden_key")
@@ -1578,7 +1564,7 @@ func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
 		var mend := int(armor_of(rec).ench.get("verdant", 0))
 		if mend > 0:
 			rec.hp = mini(int(rec.hp) + mend * 3, int(rec.max_hp))
-		reward_gold(pid, randi_range(2, 12) + floor_num * 4)
+		reward_gold(pid, randi_range(2, 12) + int(e.get("level", 0)) * 4)
 		enemy_defeated(eid, pid)
 
 
@@ -1636,7 +1622,7 @@ func _enemy_strike(eid: int, pid: int) -> void:
 				rec.buffs.append({"k": "poison", "amt": 2, "until": Time.get_ticks_msec() + 6000})
 				send_to(pid, "cl_notify", ["Venom seeps in — you are POISONED."])
 			"gold_steal":
-				var take: int = mini(int(rec.gold), randi_range(8, 20 + floor_num * 4))
+				var take: int = mini(int(rec.gold), randi_range(8, 20 + int(e.get("level", 0)) * 4))
 				rec.gold = int(rec.gold) - take
 				e["stolen"] = int(e.get("stolen", 0)) + take
 				send_to(pid, "cl_notify", ["%s snatches %d gold!" % [e.name, take]])
@@ -1751,18 +1737,18 @@ func sv_npc_quest(eid: int) -> void:
 		for t in Db.ENEMIES:
 			var d2: Dictionary = Db.ENEMIES[t]
 			if String(d2.get("disposition", "hostile")) == "hostile" and not d2.boss \
-					and floor_num >= int(d2.min_floor) and int(d2.min_floor) < 99:
+					and maxi(player_band(pid), 1) >= int(d2.min_floor) and int(d2.min_floor) < 99:
 				kill_types.append(t)
 		if randf() < 0.6 and not kill_types.is_empty():
 			var kt: String = kill_types[randi() % kill_types.size()]
 			q = {"type": "kill", "target": kt, "n": randi_range(2, 4) + rep / 2, "done": 0,
-				"reward": int((60 + floor_num * 25) * (1.0 + rep * 0.2))}
+				"reward": int((60 + player_band(pid) * 25) * (1.0 + rep * 0.2))}
 			send_to(pid, "cl_notify", ["QUEST: slay %d %ss → %d gold." % [int(q.n), Db.ENEMIES[kt].name, int(q.reward)]])
 		else:
 			var wants := ["wheat", "hog_meat", "kelp", "luckroot", "bone"]
 			var w: String = wants[randi() % wants.size()]
 			q = {"type": "gather", "target": w, "n": randi_range(3, 5), "done": 0,
-				"reward": int((50 + floor_num * 20) * (1.0 + rep * 0.2))}
+				"reward": int((50 + player_band(pid) * 20) * (1.0 + rep * 0.2))}
 			send_to(pid, "cl_notify", ["QUEST: bring %d %s → %d gold." % [int(q.n), Db.item_def(w).name, int(q.reward)]])
 		quests[pid] = q
 	elif q.type == "kill" and int(q.done) >= int(q.n):
@@ -1900,7 +1886,7 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 	rpc("cl_despawn_enemy", eid)
 	var rec: Dictionary = players.get(by_pid, {})
 	if not rec.is_empty():
-		grant_xp(by_pid, int(e.get("xp", 20 + floor_num * 10)))
+		grant_xp(by_pid, int(e.get("xp", 30)))
 		award_prof(by_pid, "combat", maxi(2, int(e.get("xp", 20)) / 10))
 		# Quest progress: kill contracts.
 		var q: Dictionary = quests.get(by_pid, {})
@@ -1919,7 +1905,7 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 		var bonus: float = float(rec.passives.get("loot_bonus", 0.0)) \
 			+ (0.5 if e.get("elite", "") != "" else 0.0) \
 			+ (float(pt.n) - 1.0) * 0.08 + (float(pt.avg) - 1.0) * 0.01
-		var drops: Array = Db.roll_loot(rng, floor_num, eff_luck(rec), bonus)
+		var drops: Array = Db.roll_loot(rng, int(e.get("level", 0)), eff_luck(rec), bonus)
 		drops.append_array(Db.ENEMIES[e.type].get("drops", []).map(
 			func(d): return {"id": d.id, "count": int(d.count), "meta": {}}))
 		var node = world.get_player(by_pid)
@@ -1928,9 +1914,7 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 			server_spawn_pickup(at + Vector3(rng.randf_range(-1.2, 1.2), 0.6,
 				rng.randf_range(-1.2, 1.2)), d, _next_loot_owner())
 	if bool(e.get("boss", false)):
-		rpc("cl_notify", "%s FALLS. The way down opens..." % String(e.name).to_upper())
-		var pp: Array = gen_info.get("portal_pos", [int(e.pos.x), 3, int(e.pos.z)])
-		_apply_edit({"t": "set", "p": pp, "b": Blocks.PORTAL})
+		rpc("cl_notify", "%s FALLS. The Deep grows quiet... for now." % String(e.name).to_upper())
 		for pid in players:
 			give_item(pid, "gambit_cache", 1, {})
 		# Signature drops beam down at the corpse for whoever claims them.
@@ -2162,21 +2146,22 @@ func _server_spawn_enemy(type: String, pos: Vector3) -> void:
 	var def: Dictionary = Db.ENEMIES[type]
 	var disp := String(def.get("disposition", "hostile"))
 	var pt := party()
-	var curve := 1.0 + 0.14 * floor_num
+	var band := Db.band_at(pos.y)  # depth is the difficulty axis now
+	var curve := 1.0 + 0.14 * band
 	if disp == "hostile":
 		# Party scaling capped so 12-player lobbies get bigger packs, not sponges.
 		curve *= minf(1.0 + 0.3 * (float(pt.n) - 1.0), 2.5) * (1.0 + 0.04 * (float(pt.avg) - 1.0))
 	var hp := int(def.hp * curve * (threat if disp == "hostile" else 1.0))
-	var atk := int(def.atk) + floor_num / 3
+	var atk := int(def.atk) + band / 3
 	if disp == "hostile":
 		atk += int((float(pt.avg) - 1.0) / 4.0)
-	var ac := int(def.ac) + floor_num / 4
-	var dmg: Array = [int(def.dmg[0]), int(def.dmg[1]), int(def.dmg[2]) + floor_num / 3]
+	var ac := int(def.ac) + band / 4
+	var dmg: Array = [int(def.dmg[0]), int(def.dmg[1]), int(def.dmg[2]) + band / 3]
 	var ename: String = def.name
 	var elite := ""
 	var gold_mult := 1.0
 	if disp == "hostile" and not def.boss \
-			and randf() < clampf(0.06 + floor_num * 0.015 + (threat - 1.0) * 0.4, 0.0, 0.5):
+			and randf() < clampf(0.06 + band * 0.015 + (threat - 1.0) * 0.4, 0.0, 0.5):
 		elite = Db.ELITES.keys()[randi() % Db.ELITES.size()]
 		var em: Dictionary = Db.ELITES[elite]
 		hp = int(hp * float(em.hp))
@@ -2191,7 +2176,7 @@ func _server_spawn_enemy(type: String, pos: Vector3) -> void:
 		"hp": hp, "max": hp, "ac": ac, "atk": atk, "dmg": dmg,
 		"xp": int(int(def.xp) * curve), "special": def.special,
 		"spec_chance": def.spec_chance, "boss": def.boss, "gold_mult": gold_mult,
-		"pos": pos, "level": floor_num, "alive": true, "in_combat": false, "cooldown": 0.0}
+		"pos": pos, "level": band, "alive": true, "in_combat": false, "cooldown": 0.0}
 	enemies[_next_eid] = e
 	_next_eid += 1
 	rpc("cl_spawn_enemy", e)
@@ -2235,6 +2220,11 @@ func _process(delta: float) -> void:
 		_fluid_accum = 0.0
 		if voxel != null and voxel.has_active_fluids():
 			_apply_edit({"t": "fluid", "p": [0, 0, 0]})
+	# World spawner: mob pressure follows the players, scaled by depth.
+	_spawner_accum += delta
+	if _spawner_accum >= 8.0:
+		_spawner_accum = 0.0
+		_server_tick_spawner()
 	# Crops random-tick like Minecraft: growth needs block light >= 8.
 	_crop_accum += delta
 	if _crop_accum >= 3.0:
@@ -2298,7 +2288,7 @@ var _ambush_t := 150.0
 ## Timed floor events, one of five every couple of minutes: ambushes, gold
 ## rushes, cave-ins, gas leaks, and wandering merchants.
 func _server_tick_ambush() -> void:
-	if floor_num <= 0 or players.is_empty():
+	if players.is_empty():
 		return
 	_ambush_t -= 1.0
 	if _ambush_t > 0.0:
@@ -2317,7 +2307,7 @@ func _server_tick_ambush() -> void:
 			rpc("cl_notify", "⚠ AMBUSH — the dark closes in on %s!" % players[target].name)
 			for i in range(2 + party().n / 2):
 				var a := randf() * TAU
-				_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat),
+				_server_spawn_enemy(Db.pick_enemy_type(rng, maxi(player_band(target), 1), threat),
 					at + Vector3(cos(a) * 6.0, 1.0, sin(a) * 6.0))
 		2:  # gold rush
 			rpc("cl_notify", "✨ GOLD RUSH — a rich vein splits the stone near %s!" % players[target].name)
@@ -2492,7 +2482,7 @@ func _server_tick_traps() -> void:
 				Blocks.TRIP_EXPL:
 					_apply_edit({"t": "set", "p": parr, "b": Blocks.AIR})
 					_apply_edit({"t": "sphere", "p": parr, "r": 2.5, "b": Blocks.AIR})
-					hurt_player(pid, 10 + floor_num * 2, "an explosive tripwire")
+					hurt_player(pid, 10 + Db.band_at(float(parr[1])) * 2, "an explosive tripwire")
 					rpc("cl_notify", "A tripwire SNAPS — the wall detonates!")
 				Blocks.TRIP_ACID:
 					_apply_edit({"t": "set", "p": parr, "b": Blocks.ACID})
@@ -2504,12 +2494,15 @@ func _server_tick_traps() -> void:
 				Blocks.RUNE_TRAP:
 					_apply_edit({"t": "set", "p": parr, "b": Blocks.AIR})
 					_apply_edit({"t": "sphere", "p": parr, "r": 3.0, "b": Blocks.AIR})
-					hurt_player(pid, 14 + floor_num * 2, "a blast glyph")
+					hurt_player(pid, 14 + Db.band_at(float(parr[1])) * 2, "a blast glyph")
 					rpc("cl_notify", "The glyph flares and DETONATES!")
 				Blocks.TELE_TRAP:
 					_apply_edit({"t": "set", "p": parr, "b": Blocks.AIR})
-					var spots: Array = gen_info.get("enemy_spawns", [])
-					var dest: Vector3 = spots[randi() % spots.size()] if not spots.is_empty() else gen_info.spawn
+					var wrng := RandomNumberGenerator.new()
+					wrng.randomize()
+					var dest := _find_spawn_spot(p.global_position, wrng)
+					if dest == Vector3.ZERO:
+						dest = gen_info.spawn
 					rpc("cl_teleport", pid, dest)
 					send_to(pid, "cl_notify", ["The floor swallows you — a warp glyph spits you out elsewhere."])
 				Blocks.CRUSH_TRIGGER:
@@ -2734,11 +2727,11 @@ func save_now() -> void:
 	for pid in players:
 		by_name[players[pid].name] = players[pid]
 	SaveMgr.save_snapshot({
-		"seed": run_seed, "floor_num": floor_num,
-		"edit_log": edit_log if floor_num != 0 else [],
-		"town_log": town_log, "players": by_name,
+		"seed": run_seed, "floor_num": 0,
+		"edit_log": edit_log,
+		"town_log": [], "players": by_name,
 		"threat": threat, "loot_rule": loot_rule,
-		"town_chests": chest_store if floor_num == 0 else town_chests,
+		"town_chests": chest_store,
 		"quests": _quests_by_name(),
 		"town_pop": town_pop,
 	})

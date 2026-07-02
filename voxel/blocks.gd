@@ -77,6 +77,8 @@ const SMOKE_2 := 66
 const SMOKE_1 := 67
 const CRUSH_TRIGGER := 68
 const WAYSTONE := 69
+const GRASS := 78
+const LEAVES := 79
 const COPPER_ORE := 70
 const IRON_ORE := 71
 const SILVER_ORE := 72
@@ -166,6 +168,9 @@ const DEFS := {
 	CRUSH_TRIGGER: {"name": "Pressure Plate", "color": Color(0.34, 0.32, 0.38), "hard": 0.4, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
 	# Waystone: placeable teleport bookmark. E = travel between your waystones.
 	WAYSTONE: {"name": "Waystone", "color": Color(0.55, 0.75, 0.95), "hard": 1.2, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "waystone"},
+	# Surface world.
+	GRASS: {"name": "Grass", "color": Color(0.36, 0.6, 0.3), "hard": 0.6, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "dirt"},
+	LEAVES: {"name": "Leaves", "color": Color(0.28, 0.52, 0.26), "hard": 0.2, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": ""},
 	# Metal ores by depth; drops are ready ingots.
 	COPPER_ORE: {"name": "Copper Ore", "color": Color(0.55, 0.38, 0.28), "hard": 1.5, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "copper_ingot"},
 	IRON_ORE: {"name": "Iron Ore", "color": Color(0.5, 0.48, 0.52), "hard": 2.0, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "iron_ingot"},

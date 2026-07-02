@@ -62,7 +62,9 @@ func refresh() -> void:
 	_gold.text = "Your purse: ◉ %d" % Game.my_rec().get("gold", 0)
 	for c in _buy_list.get_children():
 		c.queue_free()
-	var stock: Array = Db.shop_stock(Game.run_seed, Game.floor_num)
+	var p0 = main.local_player()
+	var stock: Array = Db.shop_stock(Game.run_seed,
+		Db.band_at(p0.global_position.y) if p0 != null else 0)
 	for i in range(stock.size()):
 		var offer: Dictionary = stock[i]
 		var b := UITheme.button("%s — %d g" % [Db.item_def(offer.id).name, offer.price], 14)

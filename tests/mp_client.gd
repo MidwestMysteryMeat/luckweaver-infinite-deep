@@ -39,7 +39,7 @@ func _ready() -> void:
 
 	# Server-validated edit, replicated back to us.
 	var p = Game.world.get_player(me)
-	var bp := Vector3i(int(p.global_position.x), 2, int(p.global_position.z))
+	var bp := Vector3i(int(p.global_position.x), int(p.global_position.y) - 1, int(p.global_position.z))
 	var before: int = Game.voxel.get_block_v(bp)
 	_check(before != Blocks.AIR, "solid block under my spawn")
 	Game.request_break(bp)

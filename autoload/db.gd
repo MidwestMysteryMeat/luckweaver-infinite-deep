@@ -482,6 +482,14 @@ func xp_for_level(level: int) -> int:
 	return level * 100
 
 
+## The infinite world scales by DEPTH, not floors: band 0 is the surface,
+## and every 8 blocks below y=36 is another step meaner.
+func band_at(y: float) -> int:
+	if y >= 36.0:
+		return 0
+	return clampi(1 + int((36.0 - y) / 8.0), 1, 12)
+
+
 # ---------------------------------------------------------------- proficiencies
 
 func new_profs() -> Dictionary:

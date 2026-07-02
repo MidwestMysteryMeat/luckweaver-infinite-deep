@@ -42,29 +42,31 @@ func refresh() -> void:
 		return
 	# Player-centered 48×48 window, blown up — reads like a minimap page,
 	# and the same approach will pan seamlessly on the infinite world.
+	# Infinite world: an unbounded window centered wherever you stand, scanned
+	# around YOUR depth — surface shows terrain, underground shows your cave level.
 	var p0 = main.local_player()
-	var cx := VoxelWorld.SX / 2
-	var cz := VoxelWorld.SZ / 2
+	var cx := 0
+	var cz := 0
+	var cy := WorldGen.SURFACE
 	if p0 != null:
-		cx = clampi(int(p0.global_position.x), 24, VoxelWorld.SX - 24)
-		cz = clampi(int(p0.global_position.z), 24, VoxelWorld.SZ - 24)
+		cx = int(p0.global_position.x)
+		cz = int(p0.global_position.z)
+		cy = int(p0.global_position.y)
 	var img := Image.create(48, 48, false, Image.FORMAT_RGBA8)
 	for mx in range(48):
 		for mz in range(48):
 			var x := cx - 24 + mx
 			var z := cz - 24 + mz
-			# High contrast: solid rock is near-black, walkable floor is the
-			# bright block color — rooms and corridors pop out as light shapes.
 			var col := Color(0.06, 0.05, 0.09)
-			for y in range(14, -1, -1):
+			for y in range(mini(cy + 4, WorldGen.H - 1), maxi(cy - 12, 0), -1):
 				var id: int = vw.get_block(x, y, z)
 				if id == Blocks.AIR:
 					continue
 				var def := Blocks.get_def(id)
-				if y > 6:
-					col = Color(0.09, 0.08, 0.12)  # wall mass
+				if y > cy + 1:
+					col = Color(0.09, 0.08, 0.12)  # overhead rock
 				else:
-					col = def.color.lightened(0.25)  # open floor
+					col = def.color.lightened(0.25)
 					if def.glow:
 						col = col.lightened(0.3)
 				break

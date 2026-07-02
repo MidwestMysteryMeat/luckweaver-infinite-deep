@@ -132,14 +132,16 @@ func _init(main_ref) -> void:
 	_floor.text = _floor_name(Game.floor_num)
 
 
-func _floor_name(f: int) -> String:
-	if f == 0:
-		return "🏛 The Gilded Refuge"
-	var biomes := {"delve": "⛏", "caverns": "🕳", "lakes": "🌊", "molten": "🔥"}
-	var icon: String = biomes.get(String(Game.gen_info.get("biome", "delve")), "⛏")
-	if f % 5 == 0:
-		return "👑 Floor %d — THE VAULT TYRANT" % f
-	return "%s Floor %d" % [icon, f]
+## Depth readout: the infinite world scales by how deep you've dug.
+func _floor_name(_f: int) -> String:
+	var p = main.local_player()
+	if p == null:
+		return ""
+	var y := int(p.global_position.y)
+	var band := Db.band_at(p.global_position.y)
+	if band == 0:
+		return "🏛 Surface — the Gilded Refuge (y %d)" % y
+	return "⛏ The Deep — band %d (y %d)" % [band, y]
 
 
 func _process(_delta: float) -> void:
@@ -147,6 +149,7 @@ func _process(_delta: float) -> void:
 	if p == null:
 		return
 	_refresh_stats()
+	_floor.text = _floor_name(0)
 	_tutorial.text = _prompt_hint
 	_prompt.text = p.aim_prompt() if not p.locked else ""
 	_mine_bar.visible = p.mining_progress > 0.01

@@ -103,15 +103,37 @@ func play_amb(key: String) -> void:
 		_amb.play()
 
 
-func _on_floor(fnum: int) -> void:
-	if fnum == 0:
+var _depth_accum := 0.0
+
+
+func _process(delta: float) -> void:
+	_check_depth(delta)
+
+
+func _on_floor(_fnum: int) -> void:
+	play_music("music_town")
+	play_amb("amb_delve")
+
+
+## Seamless world: music and ambience track how deep you actually are.
+func _check_depth(delta: float) -> void:
+	_depth_accum += delta
+	if _depth_accum < 3.0 or not Game.in_run or Game.world == null:
+		return
+	_depth_accum = 0.0
+	var p = Game.world.get_player(Game.my_id())
+	if p == null:
+		return
+	var band := Db.band_at(p.global_position.y)
+	if band == 0:
 		play_music("music_town")
 		play_amb("amb_delve")
-		return
-	# Rotate tracks by depth so the loop doesn't wear a groove.
-	var track := "music_boss" if fnum % 5 == 0 else \
-		("music_deep" if fnum % 2 == 0 else "music_town")
-	play_music(track)
+	elif band <= 2:
+		play_music("music_deep")
+		play_amb("amb_caverns")
+	else:
+		play_music("music_boss")
+		play_amb("amb_molten" if band >= 4 else "amb_lakes")
 	var amb_map := {"delve": "amb_delve", "caverns": "amb_caverns",
 		"lakes": "amb_lakes", "molten": "amb_molten", "fungal": "amb_caverns",
 		"crypt": "amb_delve", "frozen": "amb_caverns"}
