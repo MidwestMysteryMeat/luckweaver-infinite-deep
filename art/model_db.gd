@@ -47,6 +47,15 @@ static func load_model(path: String, alpha := 1.0) -> Node3D:
 		if typeof(parsed) != TYPE_DICTIONARY:
 			return null
 		_cache[path] = parsed
+	# Textured path (Minecraft-style): embedded palette PNG + face UVs.
+	var texs: Array = parsed.get("textures", [])
+	if not texs.is_empty():
+		var src := String(texs[0].get("source", ""))
+		if src.begins_with("data:image/png;base64,"):
+			var img := Image.new()
+			if img.load_png_from_buffer(Marshalls.base64_to_raw(src.substr(22))) == OK:
+				return _build_textured(parsed, ImageTexture.create_from_image(img), alpha)
+
 	var root := Node3D.new()
 	root.name = "Model"
 	var mats := {}
@@ -81,4 +90,70 @@ static func load_model(path: String, alpha := 1.0) -> Node3D:
 		mi.material_override = mats[hex]
 		mi.position = center
 		root.add_child(mi)
+	return root
+
+
+const _DIRS := {
+	"up": [Vector3(0, 1, 0), [Vector3(0, 1, 0), Vector3(1, 1, 0), Vector3(1, 1, 1), Vector3(0, 1, 1)]],
+	"down": [Vector3(0, -1, 0), [Vector3(0, 0, 0), Vector3(0, 0, 1), Vector3(1, 0, 1), Vector3(1, 0, 0)]],
+	"east": [Vector3(1, 0, 0), [Vector3(1, 0, 0), Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(1, 1, 0)]],
+	"west": [Vector3(-1, 0, 0), [Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(0, 1, 1), Vector3(0, 0, 1)]],
+	"south": [Vector3(0, 0, 1), [Vector3(0, 0, 1), Vector3(0, 1, 1), Vector3(1, 1, 1), Vector3(1, 0, 1)]],
+	"north": [Vector3(0, 0, -1), [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(0, 1, 0)]],
+}
+
+
+## One ArrayMesh for the whole model, UV-mapped into the embedded palette
+## texture (nearest filtering = crisp pixels).
+static func _build_textured(parsed: Dictionary, tex: ImageTexture, alpha: float) -> Node3D:
+	var res_w := float(parsed.get("resolution", {}).get("width", 32))
+	var res_h := float(parsed.get("resolution", {}).get("height", 32))
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	for el in parsed.get("elements", []):
+		var mn := Vector3(float(el.from[0]), float(el.from[1]), float(el.from[2])) / 16.0
+		var mx := Vector3(float(el.to[0]), float(el.to[1]), float(el.to[2])) / 16.0
+		var sz := mx - mn
+		if sz.length() < 0.001:
+			continue
+		var faces: Dictionary = el.get("faces", {})
+		for dir in _DIRS:
+			var fd: Dictionary = faces.get(dir, {})
+			var uv: Array = fd.get("uv", [0, 0, res_w, res_h])
+			var u0 := float(uv[0]) / res_w
+			var v0 := float(uv[1]) / res_h
+			var u1 := float(uv[2]) / res_w
+			var v1 := float(uv[3]) / res_h
+			var fuv := [Vector2(u0, v1), Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1)]
+			var base := verts.size()
+			var corners: Array = _DIRS[dir][1]
+			for vi in range(4):
+				var c: Vector3 = corners[vi]
+				verts.append(mn + c * sz)
+				normals.append(_DIRS[dir][0])
+				uvs.append(fuv[vi])
+			indices.append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if alpha < 1.0:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(1, 1, 1, alpha)
+	mesh.surface_set_material(0, mat)
+	var root := Node3D.new()
+	root.name = "Model"
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	root.add_child(mi)
 	return root

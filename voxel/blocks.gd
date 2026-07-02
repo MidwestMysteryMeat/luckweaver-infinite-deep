@@ -241,12 +241,47 @@ const INTERACTIVE := [CHEST, BENCH_SPELL, BENCH_ALCH, BENCH_SKILL, BENCH_SHOP, P
 
 static var _mat: StandardMaterial3D = null
 static var _mat_trans: StandardMaterial3D = null
+static var _atlas: ImageTexture = null
+
+## Minecraft-style pixel atlas, generated once at boot: a 16×16-texel tile per
+## block id (16 tiles per row → 256×256). Base color + deterministic speckle;
+## ores get flecks, glow blocks get a bright core. Vertex color multiplies on
+## top, so the light engine keeps working unchanged.
+static func atlas() -> ImageTexture:
+	if _atlas != null:
+		return _atlas
+	var img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	for id in DEFS:
+		var def: Dictionary = DEFS[id]
+		var base: Color = def.color
+		var tx := (int(id) % 16) * 16
+		var ty := (int(id) / 16) * 16
+		var fleck: bool = String(def.get("drop", "")).ends_with("_ingot") \
+			or id == GOLD_ORE or id == LUCKSTONE
+		for px in range(16):
+			for py in range(16):
+				var h := hash(Vector3i(px, py, int(id)))
+				var v := 1.0 + (float(absi(h) % 25) - 12.0) / 100.0
+				var c := Color(base.r * v, base.g * v, base.b * v, 1.0)
+				if fleck:
+					# Gray stone matrix with colored ore flecks.
+					var g := 0.42 * v
+					c = Color(g, g, g * 1.08, 1.0)
+					if absi(h) % 7 == 0:
+						c = Color(base.r * 1.15, base.g * 1.15, base.b * 1.15, 1.0)
+				elif def.glow and Vector2(px - 8, py - 8).length() < 4.5:
+					c = c.lightened(0.35)
+				img.set_pixel(tx + px, ty + py, c)
+	_atlas = ImageTexture.create_from_image(img)
+	return _atlas
 
 
 static func material() -> StandardMaterial3D:
 	if _mat == null:
 		_mat = StandardMaterial3D.new()
 		_mat.vertex_color_use_as_albedo = true
+		_mat.albedo_texture = atlas()
+		_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return _mat
@@ -256,10 +291,19 @@ static func material_translucent() -> StandardMaterial3D:
 	if _mat_trans == null:
 		_mat_trans = StandardMaterial3D.new()
 		_mat_trans.vertex_color_use_as_albedo = true
+		_mat_trans.albedo_texture = atlas()
+		_mat_trans.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		_mat_trans.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_mat_trans.cull_mode = BaseMaterial3D.CULL_DISABLED
 		_mat_trans.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return _mat_trans
+
+
+## UV rect for a block id's atlas tile (half-texel inset against bleeding).
+static func tile_uv(id: int) -> Rect2:
+	var u := (float(id % 16) * 16.0 + 0.5) / 256.0
+	var v := (float(id / 16) * 16.0 + 0.5) / 256.0
+	return Rect2(u, v, 15.0 / 256.0, 15.0 / 256.0)
 
 
 static func get_def(id: int) -> Dictionary:

@@ -26,10 +26,12 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
 	var t_verts := PackedVector3Array()
 	var t_normals := PackedVector3Array()
 	var t_colors := PackedColorArray()
+	var t_uvs := PackedVector2Array()
 	var t_indices := PackedInt32Array()
 	var col_faces := PackedVector3Array()
 
@@ -57,24 +59,30 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 					else:
 						var lv: float = float(vw.light_at(np.x, np.y, np.z)) / 15.0
 						shade *= 0.16 + 0.84 * lv
-					var col: Color = def.color * shade
+					# Pixel atlas carries the block's color; the vertex color is
+					# pure light/shade multiplied on top (Minecraft-style).
+					var col := Color(shade, shade, shade, 1.0)
+					var rect := Blocks.tile_uv(id)
+					var fuv := [Vector2(rect.position.x, rect.end.y), rect.position,
+						Vector2(rect.end.x, rect.position.y), rect.end]
 					var alpha: float = Blocks.ALPHA.get(id, 1.0)
 					if alpha < 1.0:
 						col.a = alpha
 						var tb := t_verts.size()
-						for v in f.v:
-							t_verts.append(Vector3(lp) + v)
+						for vi in range(4):
+							t_verts.append(Vector3(lp) + f.v[vi])
 							t_normals.append(Vector3(f.n))
 							t_colors.append(col)
+							t_uvs.append(fuv[vi])
 						t_indices.append_array(PackedInt32Array([
 							tb, tb + 1, tb + 2, tb, tb + 2, tb + 3]))
 					else:
-						col.a = 1.0
 						var base := verts.size()
-						for v in f.v:
-							verts.append(Vector3(lp) + v)
+						for vi in range(4):
+							verts.append(Vector3(lp) + f.v[vi])
 							normals.append(Vector3(f.n))
 							colors.append(col)
+							uvs.append(fuv[vi])
 						indices.append_array(PackedInt32Array([
 							base, base + 1, base + 2, base, base + 2, base + 3]))
 					if def.solid:
@@ -95,6 +103,7 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 			arrays[Mesh.ARRAY_VERTEX] = verts
 			arrays[Mesh.ARRAY_NORMAL] = normals
 			arrays[Mesh.ARRAY_COLOR] = colors
+			arrays[Mesh.ARRAY_TEX_UV] = uvs
 			arrays[Mesh.ARRAY_INDEX] = indices
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material())
@@ -104,6 +113,7 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 			t_arrays[Mesh.ARRAY_VERTEX] = t_verts
 			t_arrays[Mesh.ARRAY_NORMAL] = t_normals
 			t_arrays[Mesh.ARRAY_COLOR] = t_colors
+			t_arrays[Mesh.ARRAY_TEX_UV] = t_uvs
 			t_arrays[Mesh.ARRAY_INDEX] = t_indices
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, t_arrays)
 			mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material_translucent())

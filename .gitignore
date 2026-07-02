@@ -9,3 +9,6 @@ addons/
 # OS
 Thumbs.db
 .DS_Store
+
+# Audio: 6+ GB of raw assets — keep out of git until curated + wired up
+audio/

@@ -36,10 +36,43 @@ func _uuid() -> String:
 		randi() % 0xFFFF, randi() % 0xFFFF, randi() % 0xFFFFFFFF]
 
 
+## Bakes a 32×32 pixel-art palette texture (embedded base64 PNG) and UV-maps
+## every face to its part's noisy 8×8 swatch — Minecraft-style: the model is
+## colored in Blockbench AND carries paintable pixel detail.
 func _write(name: String, elements: Array) -> void:
+	var hexes: Array = []
+	for el in elements:
+		var nm := String(el.name)
+		var hex := nm.substr(nm.rfind("|") + 1)
+		if not hexes.has(hex):
+			hexes.append(hex)
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	for i in range(mini(hexes.size(), 16)):
+		var base := Color(hexes[i])
+		var sx := (i % 4) * 8
+		var sy := (i / 4) * 8
+		for px in range(8):
+			for py in range(8):
+				var v := 1.0 + (float(absi(hash(Vector3i(px, py, i))) % 22) - 10.0) / 100.0
+				img.set_pixel(sx + px, sy + py, Color(base.r * v, base.g * v, base.b * v, 1.0))
+	var b64 := Marshalls.raw_to_base64(img.save_png_to_buffer())
+	for el in elements:
+		var nm2 := String(el.name)
+		var idx := hexes.find(nm2.substr(nm2.rfind("|") + 1))
+		idx = clampi(idx, 0, 15)
+		var u0 := float((idx % 4) * 8) + 0.5
+		var v0 := float((idx / 4) * 8) + 0.5
+		for dir in el.faces:
+			el.faces[dir].uv = [u0, v0, u0 + 7.0, v0 + 7.0]
+			el.faces[dir].texture = 0
 	var model := {"meta": {"format_version": "4.5", "model_format": "free", "box_uv": false},
-		"name": name, "model_identifier": name, "elements": elements,
-		"outliner": elements.map(func(e): return e.uuid), "textures": []}
+		"name": name, "model_identifier": name,
+		"resolution": {"width": 32, "height": 32},
+		"elements": elements,
+		"outliner": elements.map(func(e): return e.uuid),
+		"textures": [{"name": "palette.png", "id": "0", "path": "", "mode": "bitmap",
+			"visible": true, "saved": false, "uuid": _uuid(),
+			"relative_path": "", "source": "data:image/png;base64," + b64}]}
 	var f := FileAccess.open("res://art/models/%s.bbmodel" % name, FileAccess.WRITE)
 	f.store_string(JSON.stringify(model))
 	f.close()
@@ -48,21 +81,24 @@ func _write(name: String, elements: Array) -> void:
 
 # ---------------------------------------------------------------- archetypes
 
-## Humanoid: p = {skin, torso, legs, accent}; opts: crown, hood, big
+## Humanoid, Minecraft proportions: oversized 8³ head, 8×12×4 body, 4-wide
+## limbs. p = {skin, torso, legs, accent}; opts: crown, hood, big
 func _humanoid(name: String, p: Dictionary, opts := {}) -> void:
 	var s: float = 1.5 if opts.get("big", false) else 1.0
 	var e := []
-	e.append(_box("legL", p.legs, [-3.5 * s, 0, -1.5 * s], [-0.5 * s, 7 * s, 1.5 * s]))
-	e.append(_box("legR", p.legs, [0.5 * s, 0, -1.5 * s], [3.5 * s, 7 * s, 1.5 * s]))
-	e.append(_box("torso", p.torso, [-4 * s, 7 * s, -2 * s], [4 * s, 15 * s, 2 * s]))
-	e.append(_box("armL", p.torso, [-6.5 * s, 7 * s, -1.5 * s], [-4 * s, 14.5 * s, 1.5 * s]))
-	e.append(_box("armR", p.torso, [4 * s, 7 * s, -1.5 * s], [6.5 * s, 14.5 * s, 1.5 * s]))
-	e.append(_box("head", p.skin, [-3 * s, 15 * s, -3 * s], [3 * s, 21 * s, 3 * s]))
-	e.append(_box("belt", p.accent, [-4 * s, 7 * s, -2.2 * s], [4 * s, 9 * s, 2.2 * s]))
+	e.append(_box("legL", p.legs, [-4 * s, 0, -2 * s], [0, 12 * s, 2 * s]))
+	e.append(_box("legR", p.legs, [0, 0, -2 * s], [4 * s, 12 * s, 2 * s]))
+	e.append(_box("torso", p.torso, [-4 * s, 12 * s, -2 * s], [4 * s, 24 * s, 2 * s]))
+	e.append(_box("armL", p.torso, [-8 * s, 12 * s, -2 * s], [-4 * s, 24 * s, 2 * s]))
+	e.append(_box("armR", p.torso, [4 * s, 12 * s, -2 * s], [8 * s, 24 * s, 2 * s]))
+	e.append(_box("head", p.skin, [-4 * s, 24 * s, -4 * s], [4 * s, 32 * s, 4 * s]))
+	e.append(_box("belt", p.accent, [-4.2 * s, 12 * s, -2.2 * s], [4.2 * s, 14 * s, 2.2 * s]))
+	e.append(_box("eyeL", "#1a1a22", [-2.5 * s, 28 * s, -4.4 * s], [-1 * s, 29.5 * s, -4 * s]))
+	e.append(_box("eyeR", "#1a1a22", [1 * s, 28 * s, -4.4 * s], [2.5 * s, 29.5 * s, -4 * s]))
 	if opts.get("hood", false):
-		e.append(_box("hood", p.accent, [-3.5 * s, 17 * s, -3.5 * s], [3.5 * s, 22 * s, 3.5 * s]))
+		e.append(_box("hood", p.accent, [-4.5 * s, 27 * s, -4.5 * s], [4.5 * s, 33 * s, 4.5 * s]))
 	if opts.get("crown", false):
-		e.append(_box("crown", "#f5c542", [-3.2 * s, 21 * s, -3.2 * s], [3.2 * s, 23 * s, 3.2 * s]))
+		e.append(_box("crown", "#f5c542", [-4.2 * s, 32 * s, -4.2 * s], [4.2 * s, 34.5 * s, 4.2 * s]))
 	_write(name, e)
 
 
