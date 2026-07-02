@@ -22,12 +22,18 @@ static func biome_for(run_seed: int, fnum: int) -> String:
 	var brng := RandomNumberGenerator.new()
 	brng.seed = hash("%d:biome:%d" % [run_seed, fnum])
 	var r := brng.randi_range(0, 99)
-	if r < 40:
+	if r < 28:
 		return "delve"
-	if r < 65:
+	if r < 46:
 		return "caverns"
-	if r < 85:
+	if r < 62:
 		return "lakes"
+	if r < 76:
+		return "fungal"
+	if r < 88:
+		return "crypt" if fnum >= 4 else "caverns"
+	if r < 94:
+		return "frozen" if fnum >= 5 else "delve"
 	return "molten" if fnum >= 6 else "caverns"
 
 
@@ -162,6 +168,12 @@ static func _gen_dungeon(vw: VoxelWorld, rng: RandomNumberGenerator, fnum: int, 
 			_biome_lakes(vw, rng, Blocks.WATER)
 		"molten":
 			_biome_lakes(vw, rng, Blocks.LAVA)
+		"fungal":
+			_biome_fungal(vw, rng, rooms)
+		"frozen":
+			_biome_frozen(vw, rng, rooms)
+		"crypt":
+			_biome_crypt(vw, rng, rooms)
 
 	# A hamlet, if this floor has one.
 	var settle := settlement_for(rng.seed, fnum)
@@ -339,6 +351,59 @@ static func _biome_lakes(vw: VoxelWorld, rng: RandomNumberGenerator, fluid: int)
 		vw.set_block(cx, waterline + 5, cz, Blocks.GLOWSTONE, false)
 
 
+## Fungal grottos: giant mushrooms, spore-lit air, herbs everywhere.
+static func _biome_fungal(vw: VoxelWorld, rng: RandomNumberGenerator, rooms: Array) -> void:
+	for r in rooms:
+		if rng.randf() < 0.7:
+			var mx: int = r.x + rng.randi_range(2, maxi(r.w - 2, 2))
+			var mz: int = r.z + rng.randi_range(2, maxi(r.d - 2, 2))
+			var h: int = rng.randi_range(2, 4)
+			for dy in range(h):
+				vw.set_block(mx, r.y + dy, mz, Blocks.SHROOM_STALK, false)
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					vw.set_block(mx + dx, r.y + h, mz + dz, Blocks.SHROOM_CAP, false)
+		for i in range(3):
+			var herb: int = [Blocks.HERB_GLOOM, Blocks.HERB_LUCK, Blocks.HERB_CINDER][rng.randi_range(0, 2)]
+			vw.set_block(r.x + rng.randi_range(1, maxi(r.w - 1, 1)), r.y,
+				r.z + rng.randi_range(1, maxi(r.d - 1, 1)), herb, false)
+		if rng.randf() < 0.25:  # spore pocket
+			vw.set_block(r.cx, r.y + 1, r.cz, Blocks.GAS_SLEEP_2, false)
+
+
+## Frozen halls: iced walls, an ice-sheeted pond, cold light.
+static func _biome_frozen(vw: VoxelWorld, rng: RandomNumberGenerator, rooms: Array) -> void:
+	for r in rooms:
+		for x in range(r.x, r.x + r.w + 1):
+			for z in range(r.z, r.z + r.d + 1):
+				if rng.randf() < 0.3 and vw.get_block(x, r.y - 1, z) == Blocks.STONE:
+					vw.set_block(x, r.y - 1, z, Blocks.ICE, false)
+		if rng.randf() < 0.3:
+			var px: int = r.cx
+			var pz: int = r.cz
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					if vw.get_block(px + dx, r.y - 1, pz + dz) != Blocks.BEDROCK:
+						vw.set_block(px + dx, r.y - 2, pz + dz, Blocks.WATER, false)
+						vw.set_block(px + dx, r.y - 1, pz + dz, Blocks.ICE, false)
+
+
+## Crypts: brick ruins, webs, bones in the walls, extra chests among the dead.
+static func _biome_crypt(vw: VoxelWorld, rng: RandomNumberGenerator, rooms: Array) -> void:
+	for r in rooms:
+		for i in range(rng.randi_range(2, 5)):  # ruined brick pillars
+			var px: int = r.x + rng.randi_range(1, maxi(r.w - 1, 1))
+			var pz: int = r.z + rng.randi_range(1, maxi(r.d - 1, 1))
+			for dy in range(rng.randi_range(1, 3)):
+				vw.set_block(px, r.y + dy, pz, Blocks.BRICK, false)
+		for i in range(rng.randi_range(1, 3)):
+			vw.set_block(r.x + rng.randi_range(1, maxi(r.w - 1, 1)), r.y + rng.randi_range(0, 2),
+				r.z + rng.randi_range(1, maxi(r.d - 1, 1)), Blocks.WEB, false)
+		if rng.randf() < 0.25:
+			vw.set_block(r.cx + 1, r.y, r.cz + 1,
+				Blocks.CHEST if rng.randf() < 0.5 else Blocks.CHEST_TRAPPED, false)
+
+
 static func _carve_sphere(vw: VoxelWorld, c: Vector3i, r: int) -> void:
 	for x in range(c.x - r, c.x + r + 1):
 		for y in range(c.y - r, c.y + r + 1):
@@ -356,13 +421,26 @@ static func _scatter_veins(vw: VoxelWorld, rng: RandomNumberGenerator, fnum: int
 		var roll := rng.randf()
 		var id := Blocks.DIRT
 		var size := rng.randi_range(2, 5)
-		if roll < 0.30:
+		if roll < 0.22:
 			id = Blocks.GOLD_ORE
 			size = rng.randi_range(2, 4)
-		elif roll < 0.38:
+		elif roll < 0.30:
 			id = Blocks.LUCKSTONE
 			size = rng.randi_range(1, 3)
-		elif roll < 0.55:
+		elif roll < 0.42:
+			# Metal ores gate by depth: copper anywhere, adamant only far down.
+			id = Blocks.COPPER_ORE
+			if fnum >= 9 and roll < 0.33:
+				id = Blocks.ADAMANT_ORE
+			elif fnum >= 5 and roll < 0.36:
+				id = Blocks.SILVER_ORE
+			elif fnum >= 3 and roll < 0.39:
+				id = Blocks.IRON_ORE
+			size = rng.randi_range(2, 4)
+		elif roll < 0.48:
+			id = Blocks.IRONWOOD_LOG
+			size = rng.randi_range(2, 3)
+		elif roll < 0.58:
 			id = Blocks.GRAVEL
 		elif roll < 0.68:
 			id = Blocks.SAND

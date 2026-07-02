@@ -397,7 +397,9 @@ func _attack() -> void:
 	var w2 := _best_weapon()
 	if not w2.is_empty() and String(w2.meta.get("ench", "")) == "ember":
 		_apply_status("burn", 1)  # Flamebrand ignites
-	_damage_enemy(dmg)
+	# Silver bites spirits: weapons can carry their own damage type.
+	var wtag: String = w2.def.get("dtag", "physical") if not w2.is_empty() else "physical"
+	_damage_enemy(dmg, wtag)
 	if not over:
 		_end_player_turn()
 

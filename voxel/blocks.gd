@@ -77,6 +77,14 @@ const SMOKE_2 := 66
 const SMOKE_1 := 67
 const CRUSH_TRIGGER := 68
 const WAYSTONE := 69
+const COPPER_ORE := 70
+const IRON_ORE := 71
+const SILVER_ORE := 72
+const ADAMANT_ORE := 73
+const IRONWOOD_LOG := 74
+const SHROOM_STALK := 75
+const SHROOM_CAP := 76
+const CHEST_STORE := 77
 
 const DEFS := {
 	AIR: {"name": "Air", "color": Color(0, 0, 0, 0), "hard": -1.0, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
@@ -158,6 +166,16 @@ const DEFS := {
 	CRUSH_TRIGGER: {"name": "Pressure Plate", "color": Color(0.34, 0.32, 0.38), "hard": 0.4, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
 	# Waystone: placeable teleport bookmark. E = travel between your waystones.
 	WAYSTONE: {"name": "Waystone", "color": Color(0.55, 0.75, 0.95), "hard": 1.2, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "waystone"},
+	# Metal ores by depth; drops are ready ingots.
+	COPPER_ORE: {"name": "Copper Ore", "color": Color(0.55, 0.38, 0.28), "hard": 1.5, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "copper_ingot"},
+	IRON_ORE: {"name": "Iron Ore", "color": Color(0.5, 0.48, 0.52), "hard": 2.0, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "iron_ingot"},
+	SILVER_ORE: {"name": "Silver Ore", "color": Color(0.7, 0.73, 0.8), "hard": 2.4, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "silver_ingot"},
+	ADAMANT_ORE: {"name": "Adamant Ore", "color": Color(0.35, 0.65, 0.55), "hard": 3.5, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "adamant_ingot"},
+	IRONWOOD_LOG: {"name": "Ironwood", "color": Color(0.35, 0.3, 0.22), "hard": 1.6, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "ironwood"},
+	SHROOM_STALK: {"name": "Shroom Stalk", "color": Color(0.75, 0.7, 0.6), "hard": 0.6, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "gloomcap"},
+	SHROOM_CAP: {"name": "Shroom Cap", "color": Color(0.6, 0.35, 0.55), "hard": 0.5, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "sootcap"},
+	# Player storage: shared per-chest inventory (see Game.chest_store).
+	CHEST_STORE: {"name": "Storage Chest", "color": Color(0.6, 0.42, 0.2), "hard": 1.0, "solid": true, "opaque": true, "glow": false, "falls": false, "drop": "chest_store"},
 }
 
 ## Alpha < 1 renders on the translucent mesh pass (see Mesher) — water you can
@@ -219,7 +237,7 @@ static func fluid_max(kind: String) -> int:
 ## Block ids that open a UI / respond to E.
 const INTERACTIVE := [CHEST, BENCH_SPELL, BENCH_ALCH, BENCH_SKILL, BENCH_SHOP, PORTAL,
 	DOOR, DOOR_OPEN, DOOR_LOCKED, CAMPFIRE, BENCH_SMITH, BENCH_ENCH,
-	CHEST_TRAPPED, DOOR_TRAPPED, WAYSTONE]
+	CHEST_TRAPPED, DOOR_TRAPPED, WAYSTONE, CHEST_STORE]
 
 static var _mat: StandardMaterial3D = null
 static var _mat_trans: StandardMaterial3D = null

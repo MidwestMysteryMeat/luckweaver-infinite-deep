@@ -403,6 +403,64 @@ func _run_test(main) -> void:
 		Game.request_enc_action("flee")
 	Events.enc_state.disconnect(_on_enc_state)
 
+	print("[smoke] fishing: cast, catch, fillet")
+	Game.give_item(1, "pole_wood", 1, {})
+	var pool_at := Vector3i(int(p.global_position.x) + 2, 3, int(p.global_position.z) + 2)
+	Game._apply_edit({"t": "set", "p": [pool_at.x, pool_at.y - 1, pool_at.z], "b": Blocks.WATER})
+	Game.request_fish([pool_at.x, pool_at.y - 1, pool_at.z])
+	_check(Game.fishing.has(1), "line cast into open water")
+	if Game.fishing.has(1):
+		Game.fishing[1].until = 0  # yank the bobber instantly
+	Game._server_tick_fishing()
+	_check(not Game.fishing.has(1), "catch resolved")
+	_check(int(Game.my_rec().prof.fishing.xp) > 0, "fishing skill gained use-XP")
+	var live := _find_slot("fish_live")
+	if live >= 0:
+		var meat_pre := _count_item("fish_meat")
+		Game.request_use(live, p.global_position)
+		_check(_count_item("fish_meat") > meat_pre, "live fish filleted into meat")
+	else:
+		print("  (junk/treasure bite this cast — fillet path not exercised)")
+
+	print("[smoke] storage chest: deposit + withdraw, spellbinding")
+	Game.give_item(1, "chest_store", 1, {})
+	var csp := Vector3i(int(p.global_position.x) - 2, 3, int(p.global_position.z) + 2)
+	Game.request_place(csp, _find_slot("chest_store"))
+	var ckey := "%d,%d,%d" % [csp.x, csp.y, csp.z]
+	_check(Game.chest_store.has(ckey), "placed chest registered")
+	Game.give_item(1, "bone", 3, {})
+	Game.request_chest_put(ckey, _find_slot("bone"))
+	_check(Game.chest_store[ckey].size() == 1, "item deposited")
+	Game.request_chest_take(ckey, 0)
+	_check(Game.chest_store[ckey].is_empty() and _count_item("bone") >= 3, "item withdrawn")
+	# Soul-binding via luck shard.
+	Game.give_item(1, "luck_shard", 1, {})
+	Game.my_rec().gold = maxi(int(Game.my_rec().gold), 50)
+	var bind_gear := _find_slot("blade_rusty")
+	Game.request_craft("enchant", {"gear": bind_gear, "essence": _find_slot("luck_shard")})
+	_check(bool(Game.my_rec().inv[bind_gear].meta.get("spellbound", false)), "gear soul-bound")
+
+	print("[smoke] death drops (corpse run), bound gear survives")
+	Game.give_item(1, "gravel", 5, {})
+	var pickups_pre: int = Game.pickups.size()
+	Game.hurt_player(1, 99999, "the test reaper")
+	_check(Game.pickups.size() > pickups_pre, "inventory dropped at death site")
+	_check(_find_slot("blade_rusty") >= 0 and bool(Game.my_rec().inv[_find_slot("blade_rusty")].meta.get("spellbound", false)),
+		"soul-bound blade stayed through death")
+	_check(_count_item("gravel") == 0, "unbound items gone from satchel")
+
+	print("[smoke] new biomes & recipes present")
+	var seen2 := {}
+	for f in range(3, 90):
+		seen2[DungeonGenerator.biome_for(Game.run_seed, f)] = true
+	_check(seen2.has("fungal") and seen2.has("crypt"), "fungal + crypt biomes occur (%s)" % [seen2.keys()])
+	var has_iron := false
+	for r3 in Db.SMITH_RECIPES:
+		if r3.id == "blade_iron":
+			has_iron = true
+	_check(has_iron and Db.item_def("blade_silver").get("dtag", "") == "dark",
+		"metal tiers + silver anti-spirit tag wired")
+
 	print("[smoke] save round-trip")
 	Game.save_now()
 	var snap := SaveMgr.load_latest()

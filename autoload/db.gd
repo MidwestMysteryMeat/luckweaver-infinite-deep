@@ -36,6 +36,7 @@ const ITEMS := {
 	"acid_flask": {"name": "Acid Flask", "kind": "block", "block": 35, "stack": 10, "value": 28, "color": Color(0.35, 0.85, 0.15)},
 	"seeds": {"name": "Wheat Seeds", "kind": "seed", "stack": 30, "value": 4, "color": Color(0.7, 0.75, 0.4)},
 	"waystone": {"name": "Waystone", "kind": "block", "block": 69, "stack": 5, "value": 60, "color": Color(0.55, 0.75, 0.95)},
+	"chest_store": {"name": "Storage Chest", "kind": "block", "block": 77, "stack": 5, "value": 25, "color": Color(0.6, 0.42, 0.2)},
 	"shadow_cloak": {"name": "Shadow Cloak", "kind": "armor", "slot": "body", "ac": 1, "stealth": true, "stack": 1, "value": 160, "color": Color(0.2, 0.18, 0.28)},
 	# --- tools (mining)
 	"pick_rusty": {"name": "Rusty Pick", "kind": "tool", "speed": 1.0, "stack": 1, "value": 10, "color": Color(0.5, 0.4, 0.35)},
@@ -46,6 +47,16 @@ const ITEMS := {
 	"blade_gilded": {"name": "Gilded Saber", "kind": "weapon", "dmg": [2, 6, 1], "atk": 1, "stack": 1, "value": 110, "color": Color(0.9, 0.75, 0.3)},
 	"blade_mythril": {"name": "Mythril Greatblade", "kind": "weapon", "dmg": [3, 6, 2], "atk": 2, "stack": 1, "value": 380, "color": Color(0.5, 0.85, 0.95)},
 	"maul_bone": {"name": "Bone Maul", "kind": "weapon", "dmg": [1, 12, 0], "atk": 0, "stack": 1, "value": 60, "color": Color(0.85, 0.8, 0.7)},
+	# --- metal-tier gear (dtag = damage type; silver bites spirits)
+	"blade_copper": {"name": "Copper Blade", "kind": "weapon", "dmg": [1, 6, 1], "atk": 0, "stack": 1, "value": 30, "color": Color(0.8, 0.5, 0.3)},
+	"blade_iron": {"name": "Iron Longsword", "kind": "weapon", "dmg": [2, 4, 2], "atk": 1, "stack": 1, "value": 95, "color": Color(0.65, 0.65, 0.7)},
+	"blade_silver": {"name": "Silver Saber", "kind": "weapon", "dmg": [1, 8, 1], "atk": 1, "dtag": "dark", "stack": 1, "value": 170, "color": Color(0.85, 0.88, 0.95)},
+	"blade_adamant": {"name": "Adamant Greatblade", "kind": "weapon", "dmg": [3, 8, 2], "atk": 3, "stack": 1, "value": 520, "color": Color(0.5, 0.9, 0.75)},
+	"armor_copper": {"name": "Copper Cuirass", "kind": "armor", "slot": "body", "ac": 2, "stack": 1, "value": 70, "color": Color(0.8, 0.5, 0.3)},
+	"armor_iron": {"name": "Iron Plate", "kind": "armor", "slot": "body", "ac": 3, "stack": 1, "value": 160, "color": Color(0.65, 0.65, 0.7)},
+	"helm_iron": {"name": "Iron Helm", "kind": "armor", "slot": "head", "ac": 2, "stack": 1, "value": 90, "color": Color(0.65, 0.65, 0.7)},
+	"armor_adamant": {"name": "Adamant Aegis", "kind": "armor", "slot": "body", "ac": 5, "stack": 1, "value": 600, "color": Color(0.5, 0.9, 0.75)},
+	"bow_ironwood": {"name": "Ironwood Warbow", "kind": "weapon", "ranged": true, "dmg": [2, 4, 1], "atk": 1, "stack": 1, "value": 120, "color": Color(0.35, 0.3, 0.22)},
 	# --- bows (ranged: true → Shoot action in combat, aimed shots + sneak attacks in the world)
 	"bow_short": {"name": "Shortbow", "kind": "weapon", "ranged": true, "dmg": [1, 8, 0], "atk": 1, "stack": 1, "value": 45, "color": Color(0.5, 0.38, 0.25)},
 	"bow_gilded": {"name": "Gilded Longbow", "kind": "weapon", "ranged": true, "dmg": [2, 6, 1], "atk": 2, "stack": 1, "value": 180, "color": Color(0.9, 0.75, 0.3)},
@@ -57,9 +68,21 @@ const ITEMS := {
 	"armor_bone": {"name": "Bonecarved Mail", "kind": "armor", "slot": "body", "ac": 2, "stack": 1, "value": 90, "color": Color(0.85, 0.8, 0.7)},
 	"armor_gilded": {"name": "Gilded Cuirass", "kind": "armor", "slot": "body", "ac": 3, "stack": 1, "value": 200, "color": Color(0.9, 0.75, 0.3)},
 	"armor_obsidian": {"name": "Obsidian Plate", "kind": "armor", "slot": "body", "ac": 4, "stack": 1, "value": 420, "color": Color(0.16, 0.1, 0.24)},
-	# --- smithing materials
+	# --- smithing materials (metal & wood rarities: copper→iron→silver→adamant)
 	"bone": {"name": "Bleached Bone", "kind": "material", "stack": 30, "value": 5, "color": Color(0.88, 0.85, 0.75)},
 	"hog_hide": {"name": "Gloom Hog Hide", "kind": "material", "stack": 30, "value": 7, "color": Color(0.5, 0.38, 0.3)},
+	"copper_ingot": {"name": "Copper Ingot", "kind": "material", "stack": 30, "value": 6, "color": Color(0.8, 0.5, 0.3)},
+	"iron_ingot": {"name": "Iron Ingot", "kind": "material", "stack": 30, "value": 14, "color": Color(0.65, 0.65, 0.7)},
+	"silver_ingot": {"name": "Silver Ingot", "kind": "material", "stack": 30, "value": 28, "color": Color(0.85, 0.88, 0.95)},
+	"adamant_ingot": {"name": "Adamant Ingot", "kind": "material", "stack": 30, "value": 60, "color": Color(0.5, 0.9, 0.75)},
+	"ironwood": {"name": "Ironwood", "kind": "material", "stack": 30, "value": 10, "color": Color(0.35, 0.3, 0.22)},
+	# --- fishing
+	"pole_wood": {"name": "Gloomwood Rod", "kind": "pole", "power": 1.0, "stack": 1, "value": 20, "color": Color(0.5, 0.38, 0.25)},
+	"pole_gilded": {"name": "Gilded Rod", "kind": "pole", "power": 2.0, "stack": 1, "value": 110, "color": Color(0.9, 0.75, 0.3)},
+	"pole_mythril": {"name": "Mythril Rod (lava-proof)", "kind": "pole", "power": 3.2, "stack": 1, "value": 320, "color": Color(0.5, 0.85, 0.95)},
+	"grub": {"name": "Wriggling Grub", "kind": "bait", "stack": 30, "value": 3, "color": Color(0.75, 0.65, 0.45)},
+	"fish_meat": {"name": "Fish Fillet", "kind": "ingredient", "props": ["heal", "swift"], "food": ["hearty", "fortune"], "tier": 2, "stack": 20, "value": 10, "color": Color(0.85, 0.7, 0.65)},
+	"fish_live": {"name": "Live Fish", "kind": "fish", "stack": 5, "value": 10, "color": Color(0.5, 0.65, 0.75)},
 	# --- spellcrafting runes (world effect)
 	"rune_ruin": {"name": "Rune of Ruin", "kind": "rune", "effect": "explode", "stack": 9, "value": 30, "color": Color(0.9, 0.3, 0.2)},
 	"rune_greed": {"name": "Rune of Greed", "kind": "rune", "effect": "transmute_gold", "stack": 9, "value": 45, "color": Color(0.95, 0.78, 0.25)},
@@ -110,7 +133,18 @@ const ITEMS := {
 }
 
 ## Use-leveled disciplines. Effective level = use level + allocated points × 2.
-const PROFS := ["combat", "mining", "smithing", "alchemy", "cooking", "spellcraft", "enchanting"]
+const PROFS := ["combat", "mining", "smithing", "alchemy", "cooking", "spellcraft", "enchanting", "fishing"]
+
+## Fish species: weight = catch odds (shifted by luck/pole/bait), habitat
+## "water" or "lava" (lava fishing needs the Mythril Rod). Live fish sell high;
+## process them (use the item) for meat ×2 instead.
+const FISH := {
+	"gloomfin": {"name": "Gloomfin", "rarity": Rarity.COMMON, "weight": 40, "habitat": "water", "value": 8, "color": Color(0.4, 0.5, 0.6)},
+	"silver_darter": {"name": "Silver Darter", "rarity": Rarity.UNCOMMON, "weight": 24, "habitat": "water", "value": 18, "color": Color(0.75, 0.8, 0.9)},
+	"gilded_carp": {"name": "Gilded Carp", "rarity": Rarity.RARE, "weight": 12, "habitat": "water", "value": 45, "color": Color(0.95, 0.8, 0.3)},
+	"void_eel": {"name": "Void Eel", "rarity": Rarity.EPIC, "weight": 6, "habitat": "lava", "value": 90, "color": Color(0.3, 0.15, 0.45)},
+	"luckfish": {"name": "Luckfish", "rarity": Rarity.MYTHIC, "weight": 2, "habitat": "water", "value": 200, "color": Color(0.3, 0.9, 0.6)},
+}
 
 ## Blacksmithing recipes (Skyrim-style: materials in, gear out; quality scales
 ## with the smith's effective level). mats = {item_id: count}.
@@ -130,6 +164,24 @@ const SMITH_RECIPES := [
 	{"id": "bow_gilded", "mats": {"gold_dust": 4, "wood": 3, "hog_hide": 1}, "lvl": 14},
 	{"id": "shadow_cloak", "mats": {"hog_hide": 4, "sootcap": 3}, "lvl": 9},
 	{"id": "waystone", "mats": {"stone": 6, "luck_shard": 1}, "lvl": 6},
+	# Metal tiers.
+	{"id": "blade_copper", "mats": {"copper_ingot": 3, "wood": 1}, "lvl": 2},
+	{"id": "armor_copper", "mats": {"copper_ingot": 5}, "lvl": 4},
+	{"id": "blade_iron", "mats": {"iron_ingot": 3, "wood": 1}, "lvl": 8},
+	{"id": "helm_iron", "mats": {"iron_ingot": 3}, "lvl": 9},
+	{"id": "armor_iron", "mats": {"iron_ingot": 5}, "lvl": 11},
+	{"id": "blade_silver", "mats": {"silver_ingot": 3, "wood": 1}, "lvl": 13},
+	{"id": "bow_ironwood", "mats": {"ironwood": 4, "hog_hide": 1}, "lvl": 10},
+	{"id": "blade_adamant", "mats": {"adamant_ingot": 4, "ironwood": 2}, "lvl": 28},
+	{"id": "armor_adamant", "mats": {"adamant_ingot": 6}, "lvl": 30},
+	# Fishing & camp gear.
+	{"id": "pole_wood", "mats": {"wood": 3, "hog_hide": 1}, "lvl": 1},
+	{"id": "pole_gilded", "mats": {"gold_dust": 4, "wood": 2}, "lvl": 10},
+	{"id": "pole_mythril", "mats": {"obsidian": 3, "luck_shard": 1, "wood": 2}, "lvl": 20},
+	{"id": "chest_store", "mats": {"wood": 6}, "lvl": 1},
+	{"id": "door", "mats": {"wood": 4}, "lvl": 1},
+	{"id": "campfire", "mats": {"wood": 3, "stone": 2}, "lvl": 1},
+	{"id": "glowstone", "mats": {"gold_dust": 1, "stone": 2}, "lvl": 3},
 ]
 const QUALITY_PREFIX := ["", "Fine ", "Superior ", "Exquisite ", "Legendary "]
 
@@ -468,7 +520,8 @@ func shop_stock(run_seed: int, fnum: int) -> Array:
 		"glowstone", "blade_rusty", "blade_gilded", "maul_bone", "door", "golden_key",
 		"campfire", "seeds", "seeds", "water_orb", "acid_flask", "wheat",
 		"bone", "hog_hide", "kelp", "armor_hide", "cap_hide",
-		"bow_short", "arrow", "arrow", "sootcap", "rune_veil", "rune_snare"]
+		"bow_short", "arrow", "arrow", "sootcap", "rune_veil", "rune_snare",
+		"pole_wood", "grub", "grub", "chest_store", "copper_ingot", "iron_ingot"]
 	var stock: Array = []
 	for i in range(8):
 		var id: String = pool[rng.randi_range(0, pool.size() - 1)]

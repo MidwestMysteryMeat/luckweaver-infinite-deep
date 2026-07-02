@@ -18,6 +18,8 @@ var _chat_box: VBoxContainer
 var _chat_edit: LineEdit
 var _hotbar: HBoxContainer
 var _slots: Array = []
+var _prompt_hint := ""
+var _tutorial: Label
 
 
 func _init(main_ref) -> void:
@@ -42,6 +44,14 @@ func _init(main_ref) -> void:
 	_breath.visible = false
 	stats.add_child(_breath)
 	add_child(stats)
+
+	# --- tutorial line (top-center)
+	_tutorial = UITheme.label("", 15, UITheme.NEON)
+	_tutorial.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_tutorial.position += Vector2(-300, 14)
+	_tutorial.custom_minimum_size = Vector2(600, 0)
+	_tutorial.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(_tutorial)
 
 	# --- top-right floor
 	_floor = UITheme.label("", 18, UITheme.GOLD)
@@ -132,6 +142,7 @@ func _process(_delta: float) -> void:
 	if p == null:
 		return
 	_refresh_stats()
+	_tutorial.text = _prompt_hint
 	_prompt.text = p.aim_prompt() if not p.locked else ""
 	_mine_bar.visible = p.mining_progress > 0.01
 	_mine_bar.value = p.mining_progress
@@ -160,6 +171,21 @@ func _refresh_stats() -> void:
 	var breath := float(rec.get("breath", 20.0))
 	_breath.visible = breath < 19.5
 	_breath.value = breath
+	# Tutorial breadcrumbs for fresh Luckweavers (H opens the full handbook).
+	if int(rec.level) == 1 and Game.floor_num == 0:
+		var inv: Array = rec.get("inv", [])
+		var mined := false
+		for it in inv:
+			if it != null and it.id in ["stone", "brick", "dirt"]:
+				mined = true
+		var step := "Hold LMB on a wall to MINE — then press H for the handbook"
+		if mined and int(rec.xp) == 0:
+			step = "Visit the ANVIL / CAULDRON (north wall) — then take the south PORTAL down"
+		elif int(rec.xp) > 0:
+			step = "You've drawn blood. The portal south leads deeper — good luck"
+		_prompt_hint = "✦ TUTORIAL: %s" % step
+	else:
+		_prompt_hint = ""
 
 
 func _refresh_hotbar(p) -> void:

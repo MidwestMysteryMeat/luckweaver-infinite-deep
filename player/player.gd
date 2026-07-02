@@ -282,6 +282,18 @@ func _do_place_or_use() -> void:
 		if far.kind == "enemy":
 			Game.request_bow(int(far.eid))
 		return
+	# Rod selected: cast into the water (or lava) you're looking at.
+	if kind == "pole":
+		if a.kind == "block":
+			var fk := Blocks.fluid_kind(Game.voxel.get_block_v(a.block))
+			if fk in ["water", "lava"]:
+				Game.request_fish([a.block.x, a.block.y, a.block.z])
+			else:
+				# The ray hits the surface's solid neighbor; try the place cell.
+				var pk := Blocks.fluid_kind(Game.voxel.get_block_v(a.place))
+				if pk in ["water", "lava"]:
+					Game.request_fish([a.place.x, a.place.y, a.place.z])
+		return
 	if kind == "block" or kind == "seed":
 		if a.kind == "block":
 			# Don't entomb yourself.
@@ -324,6 +336,8 @@ func _do_interact() -> void:
 			Events.open_bench.emit("cook")
 		Blocks.WAYSTONE:
 			Events.open_bench.emit("waystone")
+		Blocks.CHEST_STORE:
+			Events.open_bench.emit("chest:%d,%d,%d" % [a.block.x, a.block.y, a.block.z])
 		Blocks.BENCH_SMITH:
 			Events.open_bench.emit("smith")
 		Blocks.BENCH_ENCH:

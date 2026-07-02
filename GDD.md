@@ -169,6 +169,39 @@ guardians offer **quests** — kill contracts and gathering jobs paying gold and
 A host lobby toggle: when on, area spells, bombs, and gas clouds harm allies caught in
 the blast (half damage). Choose your Chaos Warlocks wisely.
 
+### Fishing
+Craft a rod (Gloomwood → Gilded → **Mythril, which fishes lava**), aim at any open water —
+lakes, frozen ponds, dungeon pools — and cast (RMB). Grubs dug from dirt are bait; luck,
+rod tier, bait, and your **Fishing discipline** all tilt the catch: junk, five fish species
+by rarity (Gloomfin → **Luckfish**, which grants permanent luck when filleted... or kept
+alive to sell), or sunken treasure. **Keep fish alive** for the market or *use* them to
+fillet meat for cooking.
+
+### Materials & Crafting Tiers
+Metal rarities gate progression down the floors: **copper** (anywhere) → **iron** (floor 3+)
+→ **silver** (floor 5+, its blades carry the *dark* tag that cuts ghosts) → **adamant**
+(floor 9+). **Ironwood** grows in the deep for warbows. All feed tiered anvil recipes
+(weapons, plate, helms, rods) unlocked by Smithing level. Camp gear is craftable too:
+storage chests, doors, campfires, glowstone lanterns.
+
+### Death & Storage
+- **Corpse runs:** death drops your inventory where you fell — fight back to it. Spells,
+  enchanted gear, and **soul-bound** items stay with you (bind anything at the Enchanting
+  Altar with a Luck Shard + 30g).
+- **Storage Chests** (craft: 6 wood): 12 shared slots per chest, placeable anywhere —
+  camps, hamlets, your town base. Town chests persist across the whole run.
+
+### Tutorial & Handbook
+- **H** opens the **Luckweaver's Handbook**: five pages covering movement, d20 combat,
+  benches, survival systems, and the Deep.
+- Fresh characters get **tutorial breadcrumbs** on the HUD in town (mine → craft → descend).
+- **M** opens the live floor map.
+
+### More Biomes
+Fungal grottos (giant mushrooms, spore-sleep pockets, herbs), **crypts** (brick ruins, webs,
+undead, chests among the dead), and **frozen halls** (iced floors, ice-sheeted ponds) join
+delves, caverns, lakes, and the molten depths.
+
 ### Camps & Cooking
 - Place a **campfire**: it lights the room, becomes a **respawn point**, and slowly heals
   anyone resting within its glow.

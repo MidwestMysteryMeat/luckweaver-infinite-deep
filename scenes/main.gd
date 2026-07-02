@@ -130,6 +130,8 @@ func _on_open_bench(kind: String) -> void:
 		_open_ui(ShopUI.new(self))
 	elif kind == "waystone":
 		_open_ui(WaystoneUI.new(self))
+	elif kind.begins_with("chest:"):
+		_open_ui(StorageUI.new(self, kind.substr(6)))
 	else:
 		_open_ui(CraftUI.new(self, kind))
 
@@ -165,6 +167,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _ui_stack.is_empty():
 			_open_ui(MapUI.new(self))
 		elif _ui_stack.size() == 1 and _ui_stack[0] is MapUI:
+			close_top_ui()
+		return
+	if event.is_action_pressed("guide"):
+		if _ui_stack.is_empty():
+			_open_ui(GuideUI.new(self))
+		elif _ui_stack.size() == 1 and _ui_stack[0] is GuideUI:
 			close_top_ui()
 		return
 	if event.is_action_pressed("chat") and _ui_stack.is_empty() and not hud.chat_open():

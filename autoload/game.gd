@@ -24,6 +24,9 @@ var friendly_fire := false  # host lobby setting: area effects harm allies
 var waystones := {}      # "x,y,z" -> {"pos": Vector3, "name": String} (synced)
 var last_deaths := {}    # pid -> {"gold": lost, "t": msec} for Second Dawn (server)
 var quests := {}         # pid -> {"type","target","n","done","reward"} (server)
+var fishing := {}        # pid -> {"until","lava","bait","pole"} (server)
+var chest_store := {}    # "x,y,z" -> Array of item entries (server, this floor)
+var town_chests := {}    # persisted floor-0 chest contents
 
 ## Adaptive difficulty: rises when players win fights healthy, falls on deaths.
 ## Multiplies enemy HP/attack and elite odds. Range 0.7 – 1.4, persisted in saves.
@@ -228,6 +231,163 @@ func request_waystone_tp(key: String) -> void:
 		rpc_id(1, "sv_waystone_tp", key)
 
 
+# ---------------------------------------------------------------- storage chests
+
+func request_chest_open(key: String) -> void:
+	if is_server():
+		sv_chest_open(key)
+	else:
+		rpc_id(1, "sv_chest_open", key)
+
+
+@rpc("any_peer", "reliable")
+func sv_chest_open(key: String) -> void:
+	if not is_server():
+		return
+	send_to(_sender(), "cl_chest", [key, chest_store.get(key, [])])
+
+
+func request_chest_put(key: String, slot: int) -> void:
+	if is_server():
+		sv_chest_put(key, slot)
+	else:
+		rpc_id(1, "sv_chest_put", key, slot)
+
+
+@rpc("any_peer", "reliable")
+func sv_chest_put(key: String, slot: int) -> void:
+	if not is_server() or not chest_store.has(key):
+		return
+	var pid := _sender()
+	var rec: Dictionary = players.get(pid, {})
+	if rec.is_empty() or slot < 0 or slot >= INV_SIZE or rec.inv[slot] == null:
+		return
+	var arr: Array = chest_store[key]
+	if arr.size() >= 12:
+		send_to(pid, "cl_notify", ["The chest is full."])
+		return
+	arr.append(rec.inv[slot])
+	rec.inv[slot] = null
+	_sync_player(pid)
+	rpc("cl_chest", key, arr)
+
+
+func request_chest_take(key: String, idx: int) -> void:
+	if is_server():
+		sv_chest_take(key, idx)
+	else:
+		rpc_id(1, "sv_chest_take", key, idx)
+
+
+@rpc("any_peer", "reliable")
+func sv_chest_take(key: String, idx: int) -> void:
+	if not is_server() or not chest_store.has(key):
+		return
+	var pid := _sender()
+	var arr: Array = chest_store[key]
+	if idx < 0 or idx >= arr.size():
+		return
+	var it: Dictionary = arr[idx]
+	if give_item(pid, it.id, it.count, it.get("meta", {})):
+		arr.remove_at(idx)
+		rpc("cl_chest", key, arr)
+
+
+@rpc("authority", "call_local", "reliable")
+func cl_chest(key: String, items: Array) -> void:
+	Events.chest_contents.emit(key, items)
+
+
+# ---------------------------------------------------------------- fishing
+
+func request_fish(p: Array) -> void:
+	if is_server():
+		sv_fish(p)
+	else:
+		rpc_id(1, "sv_fish", p)
+
+
+@rpc("any_peer", "reliable")
+func sv_fish(p: Array) -> void:
+	if not is_server():
+		return
+	var pid := _sender()
+	var rec: Dictionary = players.get(pid, {})
+	if rec.is_empty() or fishing.has(pid):
+		return
+	var kind := Blocks.fluid_kind(voxel.get_block(int(p[0]), int(p[1]), int(p[2])))
+	var pole := 0.0
+	var has_mythril := false
+	for e in rec.inv:
+		if e != null and Db.item_def(e.id).kind == "pole":
+			pole = maxf(pole, float(Db.item_def(e.id).power))
+			if e.id == "pole_mythril":
+				has_mythril = true
+	if pole <= 0.0:
+		send_to(pid, "cl_notify", ["You need a fishing rod."])
+		return
+	if kind != "water" and not (kind == "lava" and has_mythril):
+		send_to(pid, "cl_notify", ["Cast into open water — or lava, with a Mythril Rod."])
+		return
+	var bait: bool = _consume_id(rec, "grub", 1)
+	fishing[pid] = {"until": Time.get_ticks_msec() + randi_range(2000, 4500),
+		"lava": kind == "lava", "bait": bait, "pole": pole}
+	_sync_player(pid)
+	send_to(pid, "cl_notify", ["You cast your line%s..." % (" (grub wriggling)" if bait else "")])
+
+
+## Resolved on the 1s tick: junk, fish by rarity weights (shifted by luck,
+## pole, bait, and Fishing skill), or sunken treasure.
+func _server_tick_fishing() -> void:
+	var now := Time.get_ticks_msec()
+	for pid in fishing.keys():
+		var f: Dictionary = fishing[pid]
+		if now < int(f.until):
+			continue
+		fishing.erase(pid)
+		var rec: Dictionary = players.get(pid, {})
+		if rec.is_empty():
+			continue
+		award_prof(pid, "fishing", 6)
+		var score: float = eff_luck(rec) * 0.3 + float(f.pole) * 8.0 \
+			+ (15.0 if f.bait else 0.0) + Db.prof_eff(rec, "fishing")
+		var roll := randf() * 100.0
+		if roll < maxf(28.0 - score * 0.2, 6.0):
+			var junk: String = ["kelp", "bone", "gravel"][randi() % 3]
+			give_item(pid, junk, 1, {})
+			send_to(pid, "cl_notify", ["...just some %s." % Db.item_def(junk).name.to_lower()])
+			continue
+		if roll > 94.0:
+			reward_gold(pid, randi_range(20, 60))
+			if randf() < 0.3:
+				give_item(pid, "gambit_cache", 1, {})
+			send_to(pid, "cl_notify", ["Your hook drags up SUNKEN TREASURE!"])
+			continue
+		# Weighted species pick, habitat-filtered, rarity shifted by score.
+		var pool: Array = []
+		for fid in Db.FISH:
+			var fd: Dictionary = Db.FISH[fid]
+			if bool(f.lava) != (String(fd.habitat) == "lava"):
+				continue
+			pool.append({"id": fid, "w": float(fd.weight) + score * 0.15 * float(fd.rarity)})
+		var total := 0.0
+		for c in pool:
+			total += c.w
+		var r2 := randf() * total
+		var caught := ""
+		for c in pool:
+			r2 -= c.w
+			if r2 <= 0.0:
+				caught = c.id
+				break
+		if caught == "":
+			caught = pool[0].id
+		var fd2: Dictionary = Db.FISH[caught]
+		give_item(pid, "fish_live", 1, {"species": caught, "name": "Live %s" % fd2.name,
+			"rarity": int(fd2.rarity)})
+		send_to(pid, "cl_notify", ["Caught: %s! Keep it alive, or use it to fillet." % fd2.name])
+
+
 @rpc("any_peer", "reliable")
 func sv_waystone_tp(key: String) -> void:
 	if not is_server() or not waystones.has(key):
@@ -314,6 +474,7 @@ func request_start_run() -> void:
 		edit_log = pending_load.get("edit_log", [])
 		threat = float(pending_load.get("threat", 1.0))
 		loot_rule = String(pending_load.get("loot_rule", loot_rule))
+		town_chests = pending_load.get("town_chests", {})
 		var saved: Dictionary = pending_load.get("players", {})
 		for pid in players:
 			# A traveling character beats the world-save copy of that player.
@@ -495,6 +656,14 @@ func _scan_floor_features() -> void:
 				elif id == Blocks.WAYSTONE:
 					waystones["%d,%d,%d" % [x, y, z]] = {"pos": Vector3(x, y + 1, z),
 						"name": "Town Waystone"}
+				elif id == Blocks.CHEST_STORE:
+					var ck := "%d,%d,%d" % [x, y, z]
+					if not chest_store.has(ck):
+						chest_store[ck] = []
+	if floor_num == 0:
+		# Restore persistent town storage into the rediscovered chests.
+		for ck in town_chests:
+			chest_store[ck] = town_chests[ck]
 	rpc("cl_waystones", waystones)
 
 
@@ -535,6 +704,8 @@ func cl_remove_player(pid: int) -> void:
 func _server_descend() -> void:
 	if floor_num == 0:
 		town_log = edit_log if floor_num == 0 else town_log
+		town_chests = chest_store  # town storage persists across the run
+	chest_store = {}
 	save_now()
 	_descending = false
 	floor_num += 1
@@ -587,6 +758,8 @@ func sv_break(p: Array) -> void:
 		give_item(pid, "seeds", 1, {})
 	elif bid in [Blocks.HERB_LUCK, Blocks.HERB_GLOOM, Blocks.HERB_CINDER] and randf() < 0.3:
 		give_item(pid, "seeds", 1, {})
+	elif bid == Blocks.DIRT and randf() < 0.2:
+		give_item(pid, "grub", 1, {})  # bait lives in the dirt
 	var drop: String = def.get("drop", "")
 	if drop != "" and not (bid in [Blocks.CROP_RIPE, Blocks.CROP_1, Blocks.CROP_2]):
 		give_item(pid, drop, 1, {})
@@ -668,6 +841,15 @@ func _apply_edit(op: Dictionary) -> void:
 			crops[key] = Vector3i(int(op.p[0]), int(op.p[1]), int(op.p[2]))
 		elif crops.has(key):
 			crops.erase(key)
+		if b == Blocks.CHEST_STORE:
+			if not chest_store.has(key):
+				chest_store[key] = []
+		elif chest_store.has(key):
+			# Chest broken: its contents spill out.
+			for it in chest_store[key]:
+				server_spawn_pickup(Vector3(int(op.p[0]) + 0.5, int(op.p[1]) + 0.8,
+					int(op.p[2]) + 0.5), it, 0)
+			chest_store.erase(key)
 		if b == Blocks.WAYSTONE:
 			waystones[key] = {"pos": Vector3(int(op.p[0]), int(op.p[1]) + 1, int(op.p[2])),
 				"name": "Waystone %d·%d" % [floor_num, waystones.size() + 1]}
@@ -820,6 +1002,16 @@ func sv_use(slot: int, target: Vector3) -> void:
 			rec.skills.append(meta3)
 			rec.inv[slot] = null
 			send_to(pid, "cl_notify", ["Learned: %s" % meta3.get("name", "skill")])
+		"fish":
+			# Fillet the catch: rarer fish yield more meat.
+			var species: String = String(entry.meta.get("species", "gloomfin"))
+			var cuts: int = 2 + int(Db.FISH.get(species, {}).get("rarity", 0))
+			_consume(rec, slot, 1)
+			give_item(pid, "fish_meat", cuts, {})
+			if species == "luckfish":
+				rec.luck += 1
+				send_to(pid, "cl_notify", ["The Luckfish's last gift: +1 luck, forever."])
+			send_to(pid, "cl_notify", ["Filleted: %d Fish Fillets." % cuts])
 		"cache":
 			_consume(rec, slot, 1)
 			var rng := RandomNumberGenerator.new()
@@ -985,7 +1177,24 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 			var ga: int = payload.gear
 			var es2: int = payload.essence
 			var gk := _slot_kind(rec, ga)
-			if not (gk in ["weapon", "armor"]) or _slot_kind(rec, es2) != "essence":
+			if not (gk in ["weapon", "armor"]):
+				return
+			# Luck Shard instead of an essence = SPELLBIND: the item stays with
+			# you through death.
+			if rec.inv[es2] != null and rec.inv[es2].id == "luck_shard":
+				if rec.gold < 30:
+					send_to(pid, "cl_notify", ["Binding takes a Luck Shard and 30 gold."])
+					return
+				_consume(rec, es2, 1)
+				rec.gold -= 30
+				var bmeta: Dictionary = rec.inv[ga].meta
+				bmeta.spellbound = true
+				bmeta.name = "Bound " + String(bmeta.get("name", Db.item_def(rec.inv[ga].id).name)).trim_prefix("Bound ")
+				award_prof(pid, "enchanting", 10)
+				send_to(pid, "cl_notify", ["%s is soul-bound — death cannot take it." % bmeta.name])
+				_sync_player(pid)
+				return
+			if _slot_kind(rec, es2) != "essence":
 				return
 			if rec.inv[es2].count < 2 or rec.gold < 30:
 				send_to(pid, "cl_notify", ["Enchanting takes 2 matching essences and 30 gold."])
@@ -1460,6 +1669,26 @@ func hurt_player(pid: int, dmg: int, why: String) -> void:
 			rec.gold = int(rec.gold / 2)
 			rec.buffs = []
 			threat = maxf(threat - 0.12, 0.7)  # the dungeon eases off after a kill
+			# Corpse run: everything drops where you fell — except spells,
+			# enchanted gear, and spellbound items (bind treasures at the altar).
+			var death_node = world.get_player(pid)
+			if death_node != null:
+				var dpos: Vector3 = death_node.global_position
+				var dropped := 0
+				for i in range(INV_SIZE):
+					var it = rec.inv[i]
+					if it == null:
+						continue
+					var m: Dictionary = it.get("meta", {})
+					if Db.item_def(it.id).kind == "spell" or m.has("ench") \
+							or m.get("spellbound", false):
+						continue
+					server_spawn_pickup(dpos + Vector3(randf_range(-1.5, 1.5), 0.6,
+						randf_range(-1.5, 1.5)), it, pid)
+					rec.inv[i] = null
+					dropped += 1
+				if dropped > 0:
+					send_to(pid, "cl_notify", ["Your gear lies where you fell (%d items) — go reclaim it." % dropped])
 			if encounters.has(pid):
 				encounters[pid].abort()
 			# Wake at the nearest campfire if the party has set one up.
@@ -1627,6 +1856,7 @@ func _server_tick_enemy_statuses() -> void:
 
 func _server_tick_camps_and_regen() -> void:
 	_server_tick_enemy_statuses()
+	_server_tick_fishing()
 	for pid in players:
 		var rec: Dictionary = players[pid]
 		var p = world.get_player(pid)
@@ -1987,6 +2217,7 @@ func save_now() -> void:
 		"edit_log": edit_log if floor_num != 0 else [],
 		"town_log": town_log, "players": by_name,
 		"threat": threat, "loot_rule": loot_rule,
+		"town_chests": chest_store if floor_num == 0 else town_chests,
 	})
 
 
@@ -2023,7 +2254,7 @@ func _setup_input() -> void:
 		"mv_fwd": KEY_W, "mv_back": KEY_S, "mv_left": KEY_A, "mv_right": KEY_D,
 		"jump": KEY_SPACE, "sprint": KEY_SHIFT, "interact": KEY_E,
 		"inv": KEY_TAB, "chat": KEY_T, "pause": KEY_ESCAPE, "quicksave": KEY_F5,
-		"skills": KEY_K, "map": KEY_M,
+		"skills": KEY_K, "map": KEY_M, "guide": KEY_H,
 	}
 	for i in range(1, 10):
 		keys["hotbar_%d" % i] = KEY_0 + i
