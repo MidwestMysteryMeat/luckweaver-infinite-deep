@@ -103,7 +103,8 @@ func close_top_ui() -> void:
 	top.queue_free()
 	if _ui_stack.is_empty():
 		set_player_locked(false)
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		if Game.in_run:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func close_combat() -> void:

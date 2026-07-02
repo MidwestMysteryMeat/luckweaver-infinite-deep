@@ -139,19 +139,42 @@ func mark_all_dirty() -> void:
 		dirty[cc] = true
 
 
+## Rebuilds are read-only over the grid, so a batch fans out across worker
+## threads (edits only happen between frames, never during the flush).
 func flush_dirty(budget: int) -> void:
 	if dirty.is_empty():
 		return
-	var done := 0
+	var batch: Array = []
 	var keys := dirty.keys()
 	for cc in keys:
-		if done >= budget:
+		if batch.size() >= budget:
 			break
 		dirty.erase(cc)
-		if not chunks.has(cc):
-			continue
-		_rebuild_chunk(cc)
-		done += 1
+		if chunks.has(cc):
+			batch.append(cc)
+	if batch.is_empty():
+		return
+	if batch.size() == 1:
+		_rebuild_chunk(batch[0])
+		return
+	var results := []
+	results.resize(batch.size())
+	var task := WorkerThreadPool.add_group_task(func(i):
+		results[i] = Mesher.build(self, batch[i] * CH, CH), batch.size(), -1, true)
+	WorkerThreadPool.wait_for_group_task_completion(task)
+	for i in range(batch.size()):
+		_apply_built(batch[i], results[i])
+
+
+func _apply_built(cc: Vector3i, built: Dictionary) -> void:
+	var ch: Dictionary = chunks[cc]
+	ch.mesh.mesh = built.mesh
+	if built.faces.size() > 0:
+		var shape := ConcavePolygonShape3D.new()
+		shape.set_faces(built.faces)
+		ch.shape.shape = shape
+	else:
+		ch.shape.shape = null
 
 
 func flush_all() -> void:

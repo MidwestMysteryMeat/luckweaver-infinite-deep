@@ -285,10 +285,11 @@ func _handle_npc(action: String) -> void:
 					if String(d2.get("disposition", "hostile")) == "hostile" and not d2.boss \
 							and g.floor_num >= int(d2.min_floor) and int(d2.min_floor) < 99:
 						kill_types.append(t)
+				var rep := int(rec().get("rep", 0))
 				if rng.randf() < 0.6 and not kill_types.is_empty():
 					var kt: String = kill_types[rng.randi_range(0, kill_types.size() - 1)]
-					q = {"type": "kill", "target": kt, "n": rng.randi_range(2, 4), "done": 0,
-						"reward": 60 + g.floor_num * 25}
+					q = {"type": "kill", "target": kt, "n": rng.randi_range(2, 4) + rep / 2,
+						"done": 0, "reward": int((60 + g.floor_num * 25) * (1.0 + rep * 0.2))}
 					_say("\"%ss have been circling us. Cull %d and I'll pay %d gold.\"" %
 						[Db.ENEMIES[kt].name, int(q.n), int(q.reward)])
 				else:
@@ -303,12 +304,14 @@ func _handle_npc(action: String) -> void:
 				g.grant_xp(pid, int(q.reward) / 2)
 				_say("\"You actually did it. The hamlet sleeps easier.\" (+%d gold)" % int(q.reward))
 				g.quests.erase(pid)
+				g.quest_completed(pid, e().type)
 			elif q.type == "gather" and g._count_of(rec(), String(q.target)) >= int(q.n):
 				g._consume_id(rec(), String(q.target), int(q.n))
 				g.reward_gold(pid, int(q.reward))
 				g.grant_xp(pid, int(q.reward) / 2)
 				_say("\"Fresh %s! Bless you.\" (+%d gold)" % [Db.item_def(q.target).name, int(q.reward)])
 				g.quests.erase(pid)
+				g.quest_completed(pid, e().type)
 			else:
 				var need: String = Db.ENEMIES[q.target].name if q.type == "kill" else Db.item_def(q.target).name
 				_say("\"Still waiting: %d/%d %s.\"" % [int(q.done) if q.type == "kill"

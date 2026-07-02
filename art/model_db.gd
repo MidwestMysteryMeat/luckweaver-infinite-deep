@@ -40,6 +40,42 @@ static func class_model(class_id: String) -> Node3D:
 	return load_model("res://art/models/class_%s.bbmodel" % class_id, 1.0)
 
 
+## Model for an inventory entry (held items, world drops); null = no model.
+static func item_model(entry: Dictionary) -> Node3D:
+	var id := String(entry.get("id", ""))
+	var meta: Dictionary = entry.get("meta", {})
+	var file := ""
+	if id.begins_with("blade_") or id.begins_with("maul_") or id.begins_with("bow_"):
+		file = "weapon_" + id
+	elif id.begins_with("pick_") or id.begins_with("pole_"):
+		file = "tool_" + id
+	elif id.begins_with("rune_"):
+		file = "item_rune"
+	elif id.begins_with("card_"):
+		file = "item_sigil"
+	elif id.begins_with("ess_"):
+		file = "item_essence"
+	elif id.ends_with("_ingot"):
+		file = "item_ingot"
+	elif id == "fish_live":
+		file = "item_fish_" + String(meta.get("species", "gloomfin"))
+	elif id in ["hog_meat", "fish_meat", "toad_leg"]:
+		file = "item_meat"
+	elif id == "potion":
+		file = "item_bomb" if meta.get("throwable", false) else "item_potion_round"
+	elif id == "spell":
+		file = "item_tome"
+	elif id == "skill":
+		file = "item_scroll"
+	elif id == "gambit_cache":
+		file = "item_cache"
+	elif id == "golden_key":
+		file = "item_key"
+	if file == "":
+		return null
+	return load_model("res://art/models/%s.bbmodel" % file, 1.0)
+
+
 static func load_model(path: String, alpha := 1.0) -> Node3D:
 	if not FileAccess.file_exists(path):
 		return null

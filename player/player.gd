@@ -103,6 +103,8 @@ func _ready() -> void:
 		bmat2.emission = Color(0.3, 0.3, 0.35)
 		blade.material_override = bmat2
 		_hand.add_child(blade)
+		Events.my_record_changed.connect(_update_hand)
+		_update_hand.call_deferred()
 		_body_mesh.visible = false
 		if _body_model != null:
 			_body_model.visible = false  # first-person: hide own model
@@ -131,11 +133,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	for i in range(1, 10):
 		if event.is_action_pressed("hotbar_%d" % i):
 			selected_slot = i - 1
+			_update_hand()
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			selected_slot = (selected_slot + 8) % 9
+			_update_hand()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			selected_slot = (selected_slot + 1) % 9
+			_update_hand()
 	if event.is_action_pressed("place"):
 		_do_place_or_use()
 	if event.is_action_pressed("interact"):
@@ -167,8 +172,38 @@ func _swing_anim() -> void:
 	tw.tween_property(_hand, "rotation_degrees", Vector3.ZERO, 0.18)
 
 
+## Swap the first-person model to whatever the hotbar has selected.
+func _update_hand() -> void:
+	if _hand == null:
+		return
+	for c in _hand.get_children():
+		if c.name == "Held":
+			c.queue_free()
+	var inv: Array = Game.my_rec().get("inv", [])
+	var entry = inv[selected_slot] if selected_slot < inv.size() else null
+	var mdl: Node3D = ModelDb.item_model(entry) if entry != null else null
+	if mdl != null:
+		mdl.name = "Held"
+		mdl.scale = Vector3(0.45, 0.45, 0.45)
+		mdl.rotation_degrees = Vector3(-25, 10, 0)
+		_hand.add_child(mdl)
+	# Hide the placeholder blade whenever a real model is shown.
+	for c in _hand.get_children():
+		if c is MeshInstance3D:
+			c.visible = mdl == null
+
+
 func _physics_process(delta: float) -> void:
 	if is_local():
+		# Gamepad: right stick looks.
+		if not locked:
+			var jx := Input.get_joy_axis(0, JOY_AXIS_RIGHT_X)
+			var jy := Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y)
+			if absf(jx) > 0.15:
+				rotation.y -= jx * delta * 2.6
+			if absf(jy) > 0.15:
+				_head.rotation.x = clampf(_head.rotation.x - jy * delta * 2.0,
+					-PI / 2 + 0.05, PI / 2 - 0.05)
 		_local_move(delta)
 		_local_mine(delta)
 		_net_accum += delta

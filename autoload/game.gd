@@ -476,6 +476,7 @@ func request_start_run() -> void:
 		threat = float(pending_load.get("threat", 1.0))
 		loot_rule = String(pending_load.get("loot_rule", loot_rule))
 		town_chests = pending_load.get("town_chests", {})
+		town_pop = int(pending_load.get("town_pop", 0))
 		var saved_quests: Dictionary = pending_load.get("quests", {})
 		for pid in players:
 			if saved_quests.has(players[pid].name):
@@ -641,7 +642,19 @@ func _server_populate_floor() -> void:
 		for j in range(3):
 			_server_spawn_enemy("refuge_citizen", base + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10)))
 		_server_spawn_enemy("gloom_hog", base + Vector3(-14, 0, -4))
+		# Recruited villagers live here now.
+		for j in range(mini(town_pop, 8)):
+			_server_spawn_enemy("villager", base + Vector3(randf_range(-12, 12), 0, randf_range(-12, 12)))
 		rpc("cl_notify", "Welcome to the Gilded Refuge. The portal waits south.")
+	# Loyal pets step out of the portal after their owners.
+	for pet in _carry_pets:
+		_server_spawn_enemy(String(pet.type), base + Vector3(randf_range(-2, 2), 0.5, randf_range(-2, 2)))
+		var new_eid := _next_eid - 1
+		enemies[new_eid].tamed = true
+		enemies[new_eid].owner_pid = int(pet.owner)
+		enemies[new_eid].name = String(pet.name)
+		rpc("cl_tame", new_eid, String(pet.name), int(pet.owner))
+	_carry_pets = []
 	_scan_floor_features()
 
 
@@ -707,11 +720,20 @@ func cl_remove_player(pid: int) -> void:
 
 
 ## Server: move everyone one floor down.
+var _carry_pets: Array = []  # tamed companions ride along between floors
+var town_pop := 0            # villagers recruited to the Refuge (persisted)
+
+
 func _server_descend() -> void:
 	if floor_num == 0:
 		town_log = edit_log if floor_num == 0 else town_log
 		town_chests = chest_store  # town storage persists across the run
 	chest_store = {}
+	_carry_pets = []
+	for eid in enemies:
+		var e: Dictionary = enemies[eid]
+		if e.alive and bool(e.get("tamed", false)):
+			_carry_pets.append({"type": e.type, "name": e.name, "owner": int(e.owner_pid)})
 	save_now()
 	_descending = false
 	floor_num += 1
@@ -1267,11 +1289,13 @@ func sv_shop(action: String, idx: int) -> void:
 		if idx < 0 or idx >= stock.size():
 			return
 		var offer: Dictionary = stock[idx]
-		if rec.gold < int(offer.price):
+		# Reputation discount, capped at 25%.
+		var price := int(int(offer.price) * (1.0 - minf(int(rec.get("rep", 0)) * 0.05, 0.25)))
+		if rec.gold < price:
 			send_to(pid, "cl_notify", ["The house doesn't do credit."])
 			return
 		if give_item(pid, offer.id, 1, offer.meta.duplicate(true)):
-			rec.gold -= int(offer.price)
+			rec.gold -= price
 	elif action == "sell":
 		if idx < 0 or idx >= INV_SIZE or rec.inv[idx] == null:
 			return
@@ -1569,9 +1593,17 @@ func cl_hit_fx(eid: int, dmg: int, txt: String) -> void:
 
 
 ## One enemy swing at a player: d20 + atk vs the player's AC, plus specials.
+@rpc("authority", "call_local", "unreliable")
+func cl_lunge(eid: int) -> void:
+	var n = world.get_enemy(eid) if world != null else null
+	if n != null:
+		n.play_lunge()
+
+
 func _enemy_strike(eid: int, pid: int) -> void:
 	var e: Dictionary = enemies[eid]
 	var rec: Dictionary = players[pid]
+	rpc("cl_lunge", eid)
 	# Sleeping/frozen mobs don't swing (statuses tick down on the 1s tick).
 	if int(e.get("status", {}).get("sleep", 0)) > 0:
 		return
@@ -2607,7 +2639,23 @@ func save_now() -> void:
 		"threat": threat, "loot_rule": loot_rule,
 		"town_chests": chest_store if floor_num == 0 else town_chests,
 		"quests": _quests_by_name(),
+		"town_pop": town_pop,
 	})
+
+
+## Quest chains & reputation: each completion deepens your standing —
+## bigger contracts, shop discounts, and sometimes a new Refuge citizen.
+func quest_completed(pid: int, giver_type: String) -> void:
+	var rec: Dictionary = players.get(pid, {})
+	if rec.is_empty():
+		return
+	rec.rep = int(rec.get("rep", 0)) + 1
+	send_to(pid, "cl_notify", ["Reputation %d — traders now offer %d%% off." %
+		[int(rec.rep), mini(int(rec.rep) * 5, 25)]])
+	if giver_type == "villager" and town_pop < 8 and randf() < 0.35:
+		town_pop += 1
+		rpc("cl_notify", "Word spreads — a villager packs up to settle in the Gilded Refuge!")
+	_sync_player(pid)
 
 
 func _quests_by_name() -> Dictionary:
@@ -2667,3 +2715,19 @@ func _setup_input() -> void:
 			var mb := InputEventMouseButton.new()
 			mb.button_index = MOUSE_BUTTON_LEFT if action == "mine" else MOUSE_BUTTON_RIGHT
 			InputMap.action_add_event(action, mb)
+	# Gamepad: left stick moves (axes on the mv_ actions), face buttons map to
+	# the core verbs, right stick looks (polled in player.gd).
+	var pads := {"jump": JOY_BUTTON_A, "dodge": JOY_BUTTON_B, "interact": JOY_BUTTON_X,
+		"inv": JOY_BUTTON_Y, "pause": JOY_BUTTON_START, "map": JOY_BUTTON_BACK}
+	for action in pads:
+		var jb := InputEventJoypadButton.new()
+		jb.button_index = pads[action]
+		InputMap.action_add_event(action, jb)
+	var axes := {"mv_left": [JOY_AXIS_LEFT_X, -1.0], "mv_right": [JOY_AXIS_LEFT_X, 1.0],
+		"mv_fwd": [JOY_AXIS_LEFT_Y, -1.0], "mv_back": [JOY_AXIS_LEFT_Y, 1.0],
+		"mine": [JOY_AXIS_TRIGGER_RIGHT, 1.0], "place": [JOY_AXIS_TRIGGER_LEFT, 1.0]}
+	for action in axes:
+		var jm := InputEventJoypadMotion.new()
+		jm.axis = axes[action][0]
+		jm.axis_value = axes[action][1]
+		InputMap.action_add_event(action, jm)

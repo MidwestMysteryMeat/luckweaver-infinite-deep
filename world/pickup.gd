@@ -18,18 +18,24 @@ func _ready() -> void:
 	var meta: Dictionary = item.get("meta", {}) if not item.is_empty() else {}
 	var rare: bool = meta.has("rarity") and int(meta.rarity) >= Db.Rarity.RARE
 
-	# Gem core: a squashed octahedron-ish prism (box rotated 45°).
+	# Real item model when one exists; gem-cut prism as the fallback.
 	_core = MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.32, 0.44, 0.32) * (1.35 if rare else 1.0)
-	_core.mesh = bm
-	_core.rotation_degrees = Vector3(45, 0, 45)
+	var mdl: Node3D = ModelDb.item_model(item) if not item.is_empty() else null
+	if mdl != null:
+		mdl.scale = Vector3(0.55, 0.55, 0.55) * (1.3 if rare else 1.0)
+		_core.add_child(mdl)
+	else:
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.32, 0.44, 0.32) * (1.35 if rare else 1.0)
+		_core.mesh = bm
+		_core.rotation_degrees = Vector3(45, 0, 45)
 	_core_mat = StandardMaterial3D.new()
 	_core_mat.albedo_color = col
 	_core_mat.emission_enabled = true
 	_core_mat.emission = col
 	_core_mat.emission_energy_multiplier = 1.4 if rare else 0.8
-	_core.material_override = _core_mat
+	if mdl == null:
+		_core.material_override = _core_mat
 	add_child(_core)
 
 	# Beacon beam so drops read across a dark room.

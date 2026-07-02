@@ -98,6 +98,10 @@ func _init(main_ref) -> void:
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_status)
 
+	var how := UITheme.button("📖 How to Play", 14)
+	how.pressed.connect(func(): main._open_ui(GuideUI.new(main)))
+	root.add_child(how)
+
 	var quit := UITheme.button("Quit", 14)
 	quit.pressed.connect(func(): main.get_tree().quit())
 	root.add_child(quit)

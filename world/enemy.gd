@@ -160,8 +160,27 @@ func _attach_label(def: Dictionary) -> void:
 func _physics_process(delta: float) -> void:
 	_bob += delta * 3.0
 	_mesh.position.y = _mesh_base_y + sin(_bob) * 0.06
+	# Procedural walk: lean and waddle while moving; face travel direction.
+	var moving: float = velocity.length() if Game.is_server() \
+		else global_position.distance_to(net_target)
+	if moving > 0.4:
+		rotation.z = sin(_bob * 2.2) * 0.07
+		var flat := velocity if Game.is_server() else (net_target - global_position)
+		flat.y = 0
+		if flat.length() > 0.3:
+			rotation.y = lerp_angle(rotation.y, atan2(flat.x, flat.z), delta * 6.0)
+	else:
+		rotation.z = lerp_angle(rotation.z, 0.0, delta * 8.0)
 	if not Game.is_server():
 		global_position = global_position.lerp(net_target, minf(1.0, delta * 8.0))
+
+
+## Attack lunge: a snap toward the target and back (broadcast by the server).
+func play_lunge() -> void:
+	var tw := create_tween()
+	var fwd := -transform.basis.z * 0.45
+	tw.tween_property(self, "position", position + fwd, 0.08)
+	tw.tween_property(self, "position", position, 0.14)
 
 
 ## Server-only: wander; hostiles also stalk the nearest player within 10 blocks.
