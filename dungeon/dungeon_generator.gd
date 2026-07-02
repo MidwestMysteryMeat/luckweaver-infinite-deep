@@ -163,6 +163,12 @@ static func _gen_dungeon(vw: VoxelWorld, rng: RandomNumberGenerator, fnum: int, 
 		"molten":
 			_biome_lakes(vw, rng, Blocks.LAVA)
 
+	# A hamlet, if this floor has one.
+	var settle := settlement_for(rng.seed, fnum)
+	var settlement := {}
+	if settle != "":
+		settlement = _build_settlement(vw, rng, settle)
+
 	# Farthest room from spawn hosts the portal (or the boss arena).
 	var spawn_room: Dictionary = rooms[0]
 	var far_i := 0
@@ -205,7 +211,67 @@ static func _gen_dungeon(vw: VoxelWorld, rng: RandomNumberGenerator, fnum: int, 
 		"boss_spawn": boss_spawn,
 		"has_boss": has_boss,
 		"portal_pos": [portal_room.cx, portal_room.y, portal_room.cz],
+		"settlement": settlement,
 	}
+
+
+# ---------------------------------------------------------------- settlements
+
+## Some floors hide a hamlet: allied (traders + guardian), cozy (rest stop),
+## hostile (bandit den), or ghost (empty streets, restless dead, free loot).
+static func settlement_for(run_seed: int, fnum: int) -> String:
+	if fnum < 2 or fnum % 5 == 0:
+		return ""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("%d:settle:%d" % [run_seed, fnum])
+	if rng.randf() > 0.3:
+		return ""
+	return ["allied", "cozy", "hostile", "ghost"][rng.randi_range(0, 3)]
+
+
+static func _build_settlement(vw: VoxelWorld, rng: RandomNumberGenerator, kind: String) -> Dictionary:
+	var cx := rng.randi_range(24, VoxelWorld.SX - 24)
+	var cz := rng.randi_range(24, VoxelWorld.SZ - 24)
+	# Town square: cleared, brick-paved, lamplit.
+	_carve_box(vw, cx - 11, 3, cz - 11, cx + 11, 9, cz + 11)
+	for x in range(cx - 11, cx + 12):
+		for z in range(cz - 11, cz + 12):
+			if vw.get_block(x, 2, z) != Blocks.BEDROCK:
+				vw.set_block(x, 2, z, Blocks.BRICK, false)
+	# Four huts in the corners.
+	var spawns: Array = []
+	for corner in [[-8, -8], [8, -8], [-8, 8], [8, 8]]:
+		var hx: int = cx + corner[0]
+		var hz: int = cz + corner[1]
+		for dx in range(-2, 3):
+			for dz in range(-2, 3):
+				for dy in range(0, 3):
+					var wall: bool = abs(dx) == 2 or abs(dz) == 2
+					vw.set_block(hx + dx, 3 + dy, hz + dz,
+						Blocks.BRICK if wall else Blocks.AIR, false)
+				vw.set_block(hx + dx, 6, hz + dz, Blocks.WOOD, false)  # roof
+		vw.set_block(hx - 2, 3, hz, Blocks.DOOR, false)
+		vw.set_block(hx, 5, hz, Blocks.GLOWSTONE, false)
+		spawns.append(Vector3(hx + 0.5, 4.0, hz + 0.5))
+	# Square furniture by disposition.
+	vw.set_block(cx, 3, cz, Blocks.WAYSTONE, false)
+	vw.set_block(cx + 2, 3, cz, Blocks.CAMPFIRE, false)
+	match kind:
+		"allied":
+			vw.set_block(cx - 2, 3, cz, Blocks.BENCH_SHOP, false)
+		"cozy":
+			vw.set_block(cx - 2, 3, cz, Blocks.BENCH_SHOP, false)
+			vw.set_block(cx, 3, cz + 3, Blocks.CAMPFIRE, false)
+			vw.set_block(cx, 3, cz - 3, Blocks.HERB_LUCK, false)
+		"ghost":
+			vw.set_block(cx - 2, 3, cz, Blocks.CHEST, false)
+			vw.set_block(cx + 4, 3, cz + 4, Blocks.CHEST_TRAPPED, false)
+			vw.set_block(cx, 5, cz, Blocks.WEB, false)
+		"hostile":
+			vw.set_block(cx - 2, 3, cz, Blocks.CHEST, false)
+	for lx in [cx - 10, cx + 10]:
+		vw.set_block(lx, 6, cz, Blocks.GLOWSTONE, false)
+	return {"type": kind, "center": Vector3(cx + 0.5, 4.0, cz + 0.5), "spawns": spawns}
 
 
 # ---------------------------------------------------------------- biomes

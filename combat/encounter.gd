@@ -103,6 +103,8 @@ func _atk_bonus() -> int:
 	var watk: int = int(w.def.get("atk", 0)) if not w.is_empty() else 0
 	var b: int = int(c.atk) + int(rec().level) / 2 + watk \
 		+ int(rec().get("atk_perm", 0)) + Db.prof_eff(rec(), "combat") / 8
+	if rec().get("injuries", {}).has("arms"):
+		b -= 2
 	for buff in rec().buffs:
 		if buff.k == "atk":
 			b += int(buff.amt)
@@ -123,6 +125,8 @@ func _player_ac() -> int:
 	var ac: int = 10 + int(Db.CLASSES[rec().class_id].def) + defend_ac \
 		+ int(rec().get("ac_perm", 0)) + int(armor.ac) - ac_shred \
 		+ int(armor.ench.get("ember", 0))  # Bulwark enchant
+	if rec().get("injuries", {}).has("body"):
+		ac -= 1
 	for b in rec().buffs:
 		if b.k == "stone":
 			ac += 6
@@ -268,6 +272,45 @@ func _handle_npc(action: String) -> void:
 				g.give_item(pid, npc_offer.id, 1, {})
 				_say("\"Pleasure doing business.\" (+1 %s)" % Db.item_def(npc_offer.id).name)
 				npc_offer = {}
+		"quest":
+			# One active quest per player: kill N of a local menace, or gather
+			# ingredients. Talk to any villager again to turn it in.
+			var q: Dictionary = g.quests.get(pid, {})
+			if q.is_empty():
+				var kill_types: Array = []
+				for t in Db.ENEMIES:
+					var d2: Dictionary = Db.ENEMIES[t]
+					if String(d2.get("disposition", "hostile")) == "hostile" and not d2.boss \
+							and g.floor_num >= int(d2.min_floor) and int(d2.min_floor) < 99:
+						kill_types.append(t)
+				if rng.randf() < 0.6 and not kill_types.is_empty():
+					var kt: String = kill_types[rng.randi_range(0, kill_types.size() - 1)]
+					q = {"type": "kill", "target": kt, "n": rng.randi_range(2, 4), "done": 0,
+						"reward": 60 + g.floor_num * 25}
+					_say("\"%ss have been circling us. Cull %d and I'll pay %d gold.\"" %
+						[Db.ENEMIES[kt].name, int(q.n), int(q.reward)])
+				else:
+					var wants := ["wheat", "hog_meat", "kelp", "luckroot", "bone"]
+					q = {"type": "gather", "target": wants[rng.randi_range(0, wants.size() - 1)],
+						"n": rng.randi_range(3, 5), "done": 0, "reward": 50 + g.floor_num * 20}
+					_say("\"Bring me %d %s and %d gold is yours.\"" %
+						[int(q.n), Db.item_def(q.target).name, int(q.reward)])
+				g.quests[pid] = q
+			elif q.type == "kill" and int(q.done) >= int(q.n):
+				g.reward_gold(pid, int(q.reward))
+				g.grant_xp(pid, int(q.reward) / 2)
+				_say("\"You actually did it. The hamlet sleeps easier.\" (+%d gold)" % int(q.reward))
+				g.quests.erase(pid)
+			elif q.type == "gather" and g._count_of(rec(), String(q.target)) >= int(q.n):
+				g._consume_id(rec(), String(q.target), int(q.n))
+				g.reward_gold(pid, int(q.reward))
+				g.grant_xp(pid, int(q.reward) / 2)
+				_say("\"Fresh %s! Bless you.\" (+%d gold)" % [Db.item_def(q.target).name, int(q.reward)])
+				g.quests.erase(pid)
+			else:
+				var need: String = Db.ENEMIES[q.target].name if q.type == "kill" else Db.item_def(q.target).name
+				_say("\"Still waiting: %d/%d %s.\"" % [int(q.done) if q.type == "kill"
+					else g._count_of(rec(), String(q.target)), int(q.n), need])
 		"rob":
 			# d20 + luck/10 vs d20 + their guard/2. Fail = they draw steel.
 			var pd := rng.randi_range(1, 20)
@@ -351,6 +394,9 @@ func _attack() -> void:
 		_roll_note("you", dice, bonus, int(e().ac), "HIT")
 		_say("You roll %d+%d=%d vs AC %d — hit for %d." % [d20, bonus, total, int(e().ac), dmg])
 	dmg += _weapon_enchant_on_hit()
+	var w2 := _best_weapon()
+	if not w2.is_empty() and String(w2.meta.get("ench", "")) == "ember":
+		_apply_status("burn", 1)  # Flamebrand ignites
 	_damage_enemy(dmg)
 	if not over:
 		_end_player_turn()
@@ -384,7 +430,15 @@ func _weapon_enchant_on_hit() -> int:
 	return extra
 
 
-func _damage_enemy(dmg: int) -> void:
+## Damage with a type tag against the foe's resistances and weaknesses.
+func _damage_enemy(dmg: int, tag := "physical") -> void:
+	var def: Dictionary = Db.ENEMIES[e().type]
+	if tag in def.get("resist", []):
+		dmg = maxi(1, dmg / 2)
+		_say("(%s resists %s — halved to %d)" % [e().name, tag, dmg])
+	elif tag in def.get("weak", []):
+		dmg = int(dmg * 1.5)
+		_say("(%s is WEAK to %s — %d!)" % [e().name, tag, dmg])
 	e().hp = int(e().hp) - dmg
 	if int(e().hp) <= 0:
 		_victory()
@@ -452,6 +506,25 @@ func _shoot() -> void:
 # ---------------------------------------------------------------- enemy turn
 
 func _enemy_turn() -> void:
+	# Status effects tick at the top of the foe's turn.
+	var st: Dictionary = e().get("status", {})
+	if int(st.get("burn", 0)) > 0:
+		st.burn = int(st.burn) - 1
+		_say("%s burns for 4." % e().name)
+		_damage_enemy(4, "fire")
+		if over:
+			return
+	if int(st.get("poison", 0)) > 0:
+		st.poison = int(st.poison) - 1
+		_say("Venom eats at %s for 3." % e().name)
+		_damage_enemy(3, "poison")
+		if over:
+			return
+	if int(st.get("sleep", 0)) > 0:
+		st.sleep = int(st.sleep) - 1
+		_say("%s is fast asleep — it loses its turn." % e().name)
+		_tick_poison()
+		return
 	if enemy_stunned:
 		enemy_stunned = false
 		_say("%s is frozen solid and loses its turn!" % e().name)
@@ -610,9 +683,11 @@ func _cast(slot: int) -> void:
 		"smite":
 			var dmg := _d(power + 1, 6, power)
 			_say("%s sears %s for %d — no roll needed, fire finds its mark." % [it.meta.name, e().name, dmg])
-			_damage_enemy(dmg)
+			_apply_status("burn", 2)
+			_damage_enemy(dmg, "fire")
 		"chill":
 			enemy_stunned = true
+			_apply_status("sleep", 0)  # flavor: frozen, not slept
 			_say("%s encases %s in rime — it will lose its next turn." % [it.meta.name, e().name])
 		"mend":
 			var heal := 8 * (power + 1)
@@ -696,6 +771,21 @@ func _victory() -> void:
 	g.encounter_over(pid)
 
 
+## Applies a status to the foe unless its nature resists it.
+func _apply_status(kind: String, turns: int) -> void:
+	if turns <= 0:
+		return
+	var def: Dictionary = Db.ENEMIES[e().type]
+	var block: bool = (kind == "burn" and "fire" in def.get("resist", [])) \
+		or (kind == "poison" and "poison" in def.get("resist", []))
+	if block:
+		_say("%s shrugs off the %s." % [e().name, kind])
+		return
+	if not e().has("status"):
+		e()["status"] = {}
+	e().status[kind] = maxi(int(e().status.get(kind, 0)), turns)
+
+
 ## Called by Game when the player dies or disconnects mid-encounter.
 func abort() -> void:
 	if over:
@@ -724,6 +814,7 @@ func _actions() -> Array:
 		out.append({"id": "trade", "label": "🪙 Trade"})
 		if not npc_offer.is_empty():
 			out.append({"id": "buy", "label": "Buy (%d g)" % int(npc_offer.price)})
+		out.append({"id": "quest", "label": "📜 Quest"})
 		out.append({"id": "rob", "label": "🗡 Rob (d20)"})
 		out.append({"id": "leave", "label": "Leave"})
 		return out

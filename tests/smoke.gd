@@ -273,6 +273,64 @@ func _run_test(main) -> void:
 	var pt := Game.party()
 	_check(int(pt.n) >= 1 and float(pt.avg) >= 1.0, "party scaling snapshot works (n=%d avg=%.1f)" % [pt.n, pt.avg])
 
+	print("[smoke] waystones, injuries, resistances, statuses, settlements, FF")
+	Game.give_item(1, "waystone", 1, {})
+	var wsp := Vector3i(int(p.global_position.x) + 3, 3, int(p.global_position.z) - 3)
+	Game.request_place(wsp, _find_slot("waystone"))
+	_check(not Game.waystones.is_empty(), "placed waystone registered + synced")
+	var wkey: String = Game.waystones.keys()[0]
+	Game.request_waystone_tp(wkey)
+	_check(p.global_position.distance_to(Vector3(Game.waystones[wkey].pos)) < 4.0,
+		"waystone teleport moved the player")
+	# Injuries + cure.
+	Game.my_rec().injuries = {"arms": true}
+	Game.give_item(1, "luckroot", 1, {})
+	Game.give_item(1, "gloomcap", 1, {})
+	Game.request_craft("brew", {"slots": [_find_slot("luckroot"), _find_slot("gloomcap")]})
+	var heal_pot := -1
+	var inv_h: Array = Game.my_rec().inv
+	for i in range(inv_h.size()):
+		if inv_h[i] != null and inv_h[i].id == "potion":
+			for fx in inv_h[i].meta.get("effects", []):
+				if String(fx.prop) == "heal":
+					heal_pot = i
+	if heal_pot >= 0:
+		Game.request_use(heal_pot, p.global_position)
+		_check(Game.my_rec().injuries.is_empty(), "healing potion cured the injury")
+	# Friendly fire toggle.
+	Game.request_set_ff(true)
+	_check(Game.friendly_fire, "friendly fire setting flips")
+	Game.request_set_ff(false)
+	# Settlement variety across depths.
+	var stypes := {}
+	for f in range(2, 80):
+		var st2 := DungeonGenerator.settlement_for(Game.run_seed, f)
+		if st2 != "":
+			stypes[st2] = true
+	_check(stypes.size() >= 3, "settlement types vary across depths (%s)" % [stypes.keys()])
+	# Enemy resist/weak math via a spawned skeleton (weak: physical, resist: poison).
+	Game._server_spawn_enemy("rattlebone", p.global_position + Vector3(6, 1, 0))
+	var skel := -1
+	for eid in Game.enemies:
+		if Game.enemies[eid].type == "rattlebone" and Game.enemies[eid].alive:
+			skel = eid
+	Game.enemies[skel].pos = p.global_position + Vector3(6, 1, 0)
+	EffectExec._damage_enemies_near(Game, Vector3(Game.enemies[skel].pos), 2.0, 10, "poison", "poison", 3)
+	_check(int(Game.enemies[skel].hp) == int(Game.enemies[skel].max) - 5,
+		"poison resist halved the damage")
+	_check(int(Game.enemies[skel].get("status", {}).get("poison", 0)) == 0,
+		"poison status resisted outright")
+	EffectExec._damage_enemies_near(Game, Vector3(Game.enemies[skel].pos), 2.0, 10, "fire", "burn", 2)
+	_check(int(Game.enemies[skel].get("status", {}).get("burn", 0)) == 2, "burn status stuck")
+	# Invisibility spell meta path.
+	var rngv := RandomNumberGenerator.new()
+	rngv.randomize()
+	var veil := SpellForge.craft("rune_veil", "card_queen", "ess_void", rngv)
+	_check(String(veil.effect) == "invisibility" and veil.name == "Veilwalk",
+		"veil+void combo = Veilwalk (invisibility)")
+	var wall := SpellForge.craft("rune_wall", "card_queen", "ess_frost", rngv)
+	_check(wall.name == "Wall of Ice", "wall spells named by element")
+
 	print("[smoke] biomes: depths vary")
 	var seen := {}
 	for f in range(3, 60):

@@ -8,7 +8,8 @@ const EFFECT_NAMES := {
 	"explode": "Detonation", "transmute_gold": "Midas Bloom", "ice_path": "Glacier Road",
 	"vines": "Wildgrowth", "lava_burst": "Cinder Geyser", "teleport": "Warp Step",
 	"luck_buff": "Fortune's Kiss", "smoke_cloud": "Shroud", "glyph_trap": "Ward Glyph",
-	"mend": "Benediction",
+	"mend": "Benediction", "tunnel": "Breach", "elem_wall": "Bulwark",
+	"resurrect": "Second Dawn", "invisibility": "Veilwalk", "phase": "Ghoststep",
 }
 const ELEMENT_PREFIX := {
 	"ember": "Blazing", "frost": "Frozen", "verdant": "Verdant",
@@ -54,6 +55,15 @@ static func craft(rune_id: String, card_id: String, essence_id: String,
 	elif effect == "luck_buff" and element == "frost":
 		name = "Tidecaller's Boon"
 		meta["gills"] = true  # world cast also grants water breathing
+	elif effect == "smoke_cloud" and element == "void":
+		name = "Veilwalk"
+		meta.effect = "invisibility"
+	elif effect == "teleport" and element == "void":
+		name = "Ghoststep"
+		meta.effect = "phase"
+	elif effect == "elem_wall":
+		name = {"ember": "Wall of Fire", "frost": "Wall of Ice", "verdant": "Wall of Thorns",
+			"void": "Wall of Obsidian", "gilded": "Wall of Gold"}.get(element, name)
 	if cursed:
 		name = "Fiend's Pact: " + name
 	meta.name = name

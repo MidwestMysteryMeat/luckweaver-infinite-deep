@@ -76,6 +76,7 @@ const SMOKE_3 := 65
 const SMOKE_2 := 66
 const SMOKE_1 := 67
 const CRUSH_TRIGGER := 68
+const WAYSTONE := 69
 
 const DEFS := {
 	AIR: {"name": "Air", "color": Color(0, 0, 0, 0), "hard": -1.0, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
@@ -155,6 +156,20 @@ const DEFS := {
 	# Pressure plate that arms an old-school crusher: a plane of spikes
 	# descends from the ceiling (or closes in from a wall). See Game crushers.
 	CRUSH_TRIGGER: {"name": "Pressure Plate", "color": Color(0.34, 0.32, 0.38), "hard": 0.4, "solid": false, "opaque": false, "glow": false, "falls": false, "drop": ""},
+	# Waystone: placeable teleport bookmark. E = travel between your waystones.
+	WAYSTONE: {"name": "Waystone", "color": Color(0.55, 0.75, 0.95), "hard": 1.2, "solid": true, "opaque": true, "glow": true, "falls": false, "drop": "waystone"},
+}
+
+## Alpha < 1 renders on the translucent mesh pass (see Mesher) — water you can
+## see into, drifting gas, gauzy webs, ghost-light ice.
+const ALPHA := {
+	WATER: 0.55, WATER_F3: 0.55, WATER_F2: 0.5, WATER_F1: 0.45,
+	ACID: 0.6, ACID_F3: 0.6, ACID_F2: 0.55, ACID_F1: 0.5,
+	ICE: 0.7, WEB: 0.45, DOOR_OPEN: 0.35,
+	GAS_POISON_2: 0.4, GAS_POISON_1: 0.3, GAS_SLEEP_2: 0.4, GAS_SLEEP_1: 0.3,
+	GAS_INVERT_2: 0.45, GAS_INVERT_1: 0.35,
+	SMOKE_3: 0.6, SMOKE_2: 0.5, SMOKE_1: 0.35,
+	STEAM_3: 0.4, STEAM_2: 0.3, STEAM_1: 0.2,
 }
 
 ## kind -> {level: id}. Source = highest level; lower levels are thinning flow.
@@ -204,9 +219,10 @@ static func fluid_max(kind: String) -> int:
 ## Block ids that open a UI / respond to E.
 const INTERACTIVE := [CHEST, BENCH_SPELL, BENCH_ALCH, BENCH_SKILL, BENCH_SHOP, PORTAL,
 	DOOR, DOOR_OPEN, DOOR_LOCKED, CAMPFIRE, BENCH_SMITH, BENCH_ENCH,
-	CHEST_TRAPPED, DOOR_TRAPPED]
+	CHEST_TRAPPED, DOOR_TRAPPED, WAYSTONE]
 
 static var _mat: StandardMaterial3D = null
+static var _mat_trans: StandardMaterial3D = null
 
 
 static func material() -> StandardMaterial3D:
@@ -216,6 +232,16 @@ static func material() -> StandardMaterial3D:
 		_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return _mat
+
+
+static func material_translucent() -> StandardMaterial3D:
+	if _mat_trans == null:
+		_mat_trans = StandardMaterial3D.new()
+		_mat_trans.vertex_color_use_as_albedo = true
+		_mat_trans.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_mat_trans.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_mat_trans.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return _mat_trans
 
 
 static func get_def(id: int) -> Dictionary:

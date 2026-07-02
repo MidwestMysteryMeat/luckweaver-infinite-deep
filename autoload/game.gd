@@ -20,6 +20,10 @@ var edit_log: Array = [] # ops for the current floor
 var town_log: Array = [] # persistent floor-0 ops
 var pending_load := {}   # save snapshot to restore when hosting
 var loot_rule := "ffa"   # ffa | round_robin | shared_gold (host sets in lobby)
+var friendly_fire := false  # host lobby setting: area effects harm allies
+var waystones := {}      # "x,y,z" -> {"pos": Vector3, "name": String} (synced)
+var last_deaths := {}    # pid -> {"gold": lost, "t": msec} for Second Dawn (server)
+var quests := {}         # pid -> {"type","target","n","done","reward"} (server)
 
 ## Adaptive difficulty: rises when players win fights healthy, falls on deaths.
 ## Multiplies enemy HP/attack and elite odds. Range 0.7 – 1.4, persisted in saves.
@@ -90,6 +94,8 @@ func eff_luck(rec: Dictionary) -> int:
 	for b in rec.buffs:
 		if b.k == "luck":
 			l += int(b.amt)
+	if rec.get("injuries", {}).has("head"):
+		l -= 5
 	return clampi(l, 0, 90)
 
 
@@ -150,6 +156,8 @@ func _record_for(pid: int, pname: String, class_id: String, chr: Dictionary) -> 
 		if not rec.has("atk_perm"):
 			rec.atk_perm = 0
 			rec.ac_perm = 0
+		if not rec.has("injuries"):
+			rec.injuries = {}
 		return rec
 	return _new_record(pid, pname, class_id)
 
@@ -195,6 +203,40 @@ func cl_loot_rule(rule: String) -> void:
 	Events.lobby_changed.emit()
 
 
+func request_set_ff(on: bool) -> void:
+	if is_server():
+		friendly_fire = on
+		rpc("cl_ff", on)
+
+
+@rpc("authority", "call_local", "reliable")
+func cl_ff(on: bool) -> void:
+	friendly_fire = on
+	Events.lobby_changed.emit()
+
+
+@rpc("authority", "call_local", "reliable")
+func cl_waystones(ws: Dictionary) -> void:
+	waystones = ws
+	Events.players_changed.emit()
+
+
+func request_waystone_tp(key: String) -> void:
+	if is_server():
+		sv_waystone_tp(key)
+	else:
+		rpc_id(1, "sv_waystone_tp", key)
+
+
+@rpc("any_peer", "reliable")
+func sv_waystone_tp(key: String) -> void:
+	if not is_server() or not waystones.has(key):
+		return
+	var pid := _sender()
+	rpc("cl_teleport", pid, Vector3(waystones[key].pos) + Vector3(1, 0.5, 0))
+	send_to(pid, "cl_notify", ["The waystone hums — and the dungeon folds around you."])
+
+
 func _on_peer_connected(_pid: int) -> void:
 	pass  # client introduces itself via sv_register
 
@@ -219,7 +261,7 @@ func _new_record(pid: int, pname: String, class_id: String) -> Dictionary:
 		"pid": pid, "name": pname, "class_id": class_id,
 		"hp": c.hp, "max_hp": c.hp, "gold": c.gold, "luck": c.luck,
 		"atk_perm": 0, "ac_perm": 0, "breath": BREATH_MAX,
-		"prof": Db.new_profs(), "skill_points": 0, "alloc": {},
+		"prof": Db.new_profs(), "skill_points": 0, "alloc": {}, "injuries": {},
 		"level": 1, "xp": 0, "mutations": [], "passives": {}, "buffs": [],
 		"skills": [], "in_enc": false, "die_hard_used": false,
 		"inv": [],
@@ -405,6 +447,28 @@ func _server_populate_floor() -> void:
 		}
 		rpc("cl_notify", "Floor %d: %s." % [floor_num,
 			biome_lines.get(String(gen_info.get("biome", "delve")), "something stirs in the dark")])
+		# Populate the hamlet, if the floor has one.
+		var settle: Dictionary = gen_info.get("settlement", {})
+		if not settle.is_empty():
+			var sspawns: Array = settle.spawns
+			match String(settle.type):
+				"allied":
+					for s in sspawns.slice(0, 3):
+						_server_spawn_enemy("villager", s)
+					_server_spawn_enemy("town_guardian", sspawns[3])
+					rpc("cl_notify", "Lantern light ahead — an allied hamlet trades here.")
+				"cozy":
+					for s in sspawns.slice(0, 3):
+						_server_spawn_enemy("villager", s)
+					rpc("cl_notify", "Warm smoke rises — a cozy hamlet welcomes travelers.")
+				"hostile":
+					for s in sspawns:
+						_server_spawn_enemy("bandit", s)
+					rpc("cl_notify", "A palisade of stolen goods — BANDITS hold this hamlet.")
+				"ghost":
+					for s in sspawns.slice(0, 3):
+						_server_spawn_enemy("gloom_ghost", s)
+					rpc("cl_notify", "Empty streets, cold hearths... a ghost town. Something still walks it.")
 	else:
 		# Town: citizens mill about the plaza, a hog roots by the garden.
 		for j in range(3):
@@ -419,6 +483,7 @@ func _server_populate_floor() -> void:
 func _scan_floor_features() -> void:
 	camps = {}
 	crops = {}
+	waystones = {}
 	for y in range(VoxelWorld.SY):
 		for z in range(VoxelWorld.SZ):
 			for x in range(VoxelWorld.SX):
@@ -427,6 +492,10 @@ func _scan_floor_features() -> void:
 					camps["%d,%d,%d" % [x, y, z]] = Vector3(x + 0.5, y + 0.5, z + 0.5)
 				elif id == Blocks.CROP_1 or id == Blocks.CROP_2:
 					crops["%d,%d,%d" % [x, y, z]] = Vector3i(x, y, z)
+				elif id == Blocks.WAYSTONE:
+					waystones["%d,%d,%d" % [x, y, z]] = {"pos": Vector3(x, y + 1, z),
+						"name": "Town Waystone"}
+	rpc("cl_waystones", waystones)
 
 
 func _spawn_one_late(pid: int) -> void:
@@ -599,6 +668,13 @@ func _apply_edit(op: Dictionary) -> void:
 			crops[key] = Vector3i(int(op.p[0]), int(op.p[1]), int(op.p[2]))
 		elif crops.has(key):
 			crops.erase(key)
+		if b == Blocks.WAYSTONE:
+			waystones[key] = {"pos": Vector3(int(op.p[0]), int(op.p[1]) + 1, int(op.p[2])),
+				"name": "Waystone %d·%d" % [floor_num, waystones.size() + 1]}
+			rpc("cl_waystones", waystones)
+		elif waystones.has(key):
+			waystones.erase(key)
+			rpc("cl_waystones", waystones)
 	rpc("cl_apply_edit", op)
 
 
@@ -1200,6 +1276,11 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 	if not rec.is_empty():
 		grant_xp(by_pid, int(e.get("xp", 20 + floor_num * 10)))
 		award_prof(by_pid, "combat", maxi(2, int(e.get("xp", 20)) / 10))
+		# Quest progress: kill contracts.
+		var q: Dictionary = quests.get(by_pid, {})
+		if not q.is_empty() and q.type == "kill" and String(q.target) == String(e.type):
+			q.done = int(q.done) + 1
+			send_to(by_pid, "cl_notify", ["Quest: %d/%d %s." % [int(q.done), int(q.n), e.name]])
 		# Adaptive threat: comfortable wins ratchet the dungeon up.
 		var hp_frac: float = float(rec.hp) / float(rec.max_hp)
 		if hp_frac > 0.7:
@@ -1357,12 +1438,24 @@ func hurt_player(pid: int, dmg: int, why: String) -> void:
 			send_to(pid, "cl_notify", ["Stoneblood shrugs it off."])
 			return
 	rec.hp -= dmg
+	# Heavy hits can wound a body part: head (-luck), arms (-attack),
+	# legs (slower), body (-AC). Healing cures (see EffectExec / Cooking).
+	if dmg >= int(rec.max_hp) / 4 and randf() < 0.35:
+		var slots := ["head", "arms", "legs", "body"]
+		var slot: String = slots[randi() % slots.size()]
+		if not rec.get("injuries", {}).has(slot):
+			if not rec.has("injuries"):
+				rec.injuries = {}
+			rec.injuries[slot] = true
+			send_to(pid, "cl_notify", ["INJURY: your %s — find healing to mend it." % slot])
 	if rec.hp <= 0:
 		if rec.mutations.has("die_hard") and not rec.die_hard_used:
 			rec.die_hard_used = true
 			rec.hp = 1
 			send_to(pid, "cl_notify", ["Die Hard! You refuse the reaper."])
 		else:
+			var lost := int(rec.gold) - int(rec.gold / 2)
+			last_deaths[pid] = {"gold": lost, "t": Time.get_ticks_msec()}
 			rec.hp = rec.max_hp
 			rec.gold = int(rec.gold / 2)
 			rec.buffs = []
@@ -1513,7 +1606,27 @@ func _server_tick_crops() -> void:
 			_apply_edit({"t": "set", "p": [c.x, c.y, c.z], "b": next})
 
 
+## 1s tick: out-of-combat enemy DoTs resolve here (burn/poison/sleep decay).
+func _server_tick_enemy_statuses() -> void:
+	for eid in enemies.keys():
+		var e: Dictionary = enemies[eid]
+		if not e.alive or e.in_combat or not e.has("status"):
+			continue
+		var st: Dictionary = e.status
+		if int(st.get("burn", 0)) > 0:
+			st.burn = int(st.burn) - 1
+			e.hp = int(e.hp) - 4
+		if int(st.get("poison", 0)) > 0:
+			st.poison = int(st.poison) - 1
+			e.hp = int(e.hp) - 3
+		if int(st.get("sleep", 0)) > 0:
+			st.sleep = int(st.sleep) - 1
+		if int(e.hp) <= 0:
+			enemy_defeated(eid, 1)
+
+
 func _server_tick_camps_and_regen() -> void:
+	_server_tick_enemy_statuses()
 	for pid in players:
 		var rec: Dictionary = players[pid]
 		var p = world.get_player(pid)
@@ -1542,6 +1655,21 @@ func _server_tick_enemies() -> void:
 		var node = world.get_enemy(eid)
 		if node == null:
 			continue
+		# World status effects: gases sedate/poison mobs, lava ignites them.
+		var epos := Vector3i(Vector3(e.pos).floor())
+		var ekind := Blocks.fluid_kind(voxel.get_block_v(epos + Vector3i(0, 1, 0)))
+		if not e.has("status"):
+			e["status"] = {}
+		match ekind:
+			"sleep_gas":
+				e.status.sleep = maxi(int(e.status.get("sleep", 0)), 2)
+			"poison_gas":
+				e.status.poison = maxi(int(e.status.get("poison", 0)), 3)
+			"lava":
+				e.status.burn = maxi(int(e.status.get("burn", 0)), 2)
+		if int(e.status.get("sleep", 0)) > 0:
+			posmap[eid] = e.pos
+			continue  # out cold — no wandering, no ambushes
 		if not e.in_combat:
 			node.smoked = is_smoked(e.pos)
 			node.tick_ai(players, world)
@@ -1895,7 +2023,7 @@ func _setup_input() -> void:
 		"mv_fwd": KEY_W, "mv_back": KEY_S, "mv_left": KEY_A, "mv_right": KEY_D,
 		"jump": KEY_SPACE, "sprint": KEY_SHIFT, "interact": KEY_E,
 		"inv": KEY_TAB, "chat": KEY_T, "pause": KEY_ESCAPE, "quicksave": KEY_F5,
-		"skills": KEY_K,
+		"skills": KEY_K, "map": KEY_M,
 	}
 	for i in range(1, 10):
 		keys["hotbar_%d" % i] = KEY_0 + i

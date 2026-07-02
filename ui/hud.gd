@@ -153,6 +153,9 @@ func _refresh_stats() -> void:
 	var pts := int(rec.get("skill_points", 0))
 	if pts > 0:
 		muts += "  |  ✦ %d skill point%s (K)" % [pts, "s" if pts > 1 else ""]
+	var inj: Dictionary = rec.get("injuries", {})
+	if not inj.is_empty():
+		muts += "  |  🩸 injured: %s" % ", ".join(inj.keys())
 	_level.text = "lv %d (%d/%d xp)%s" % [rec.level, rec.xp, Db.xp_for_level(int(rec.level)), muts]
 	var breath := float(rec.get("breath", 20.0))
 	_breath.visible = breath < 19.5

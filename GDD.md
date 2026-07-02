@@ -133,6 +133,42 @@ level, disciplines, gear, and gold come along (pick a different class and you st
 class fresh). Difficulty and loot scale live with **party size and average level** on top of
 the adaptive threat system.
 
+### Stealth, Spirits & Status Warfare
+- **Chameleon Stalkers** fade into the walls (near-invisible until their eyes give them
+  away); **Gloom Ghosts** drift straight through walls and shrug off physical blows.
+- **Every mob has resistances and weaknesses** (physical/fire/frost/poison/dark): oozes
+  shrug poison but melt to fire, brutes shrug fire but crack to frost, skeletons splinter
+  to maces but ignore venom. Damage is tagged and the log calls out resists and weak hits.
+- **Status effects go both ways:** burn, poison, and sleep afflict enemies too — put a pack
+  to sleep with gas, ignite them with Flamebrand or fire spells, poison them with flasks.
+  Statuses tick in combat *and* in the open world.
+- **Player stealth:** the **Veilwalk** spell (veil rune + void essence) and the smithable
+  **Shadow Cloak** hide you from stalking eyes; smoke does too.
+- **Injuries:** massive hits can wound a body part — head (-luck), arms (-attack), legs
+  (slower), body (-AC). Healing potions mend one; Benediction-class spells cure all.
+- **Second Dawn** (soul rune): resurrection — calls a recently-fallen ally to your side,
+  fully healed, with the gold the reaper took returned.
+- **Battlefield shaping spells:** Wall of Fire / Ice / Thorns / Obsidian / Gold (wall rune ×
+  essence), **Breach** (melt a corridor through solid rock), **Ghoststep** (phase through
+  the wall in front of you).
+
+### Dungeon Towns
+Some floors hide a **hamlet** — brick huts, a lamplit square, a campfire, and a **town
+waystone**: *Allied* (villagers trade, a Town Guardian keeps the peace), *Cozy* (extra
+hearths, a shop, herbs), *Hostile* (bandits hold it — take it back), or *Ghost towns*
+(empty streets, restless dead, unguarded chests... mostly). Villagers, explorers, and
+guardians offer **quests** — kill contracts and gathering jobs paying gold and XP.
+
+### Maps & Waystones
+- **M** opens the floor map — a live top-down render of the terrain with you and every
+  waystone marked.
+- **Waystones** are placeable, smithable teleport bookmarks: press E on any waystone to
+  travel between all attuned stones on the floor. Towns come with one.
+
+### Friendly Fire
+A host lobby toggle: when on, area spells, bombs, and gas clouds harm allies caught in
+the blast (half damage). Choose your Chaos Warlocks wisely.
+
 ### Camps & Cooking
 - Place a **campfire**: it lights the room, becomes a **respawn point**, and slowly heals
   anyone resting within its glow.

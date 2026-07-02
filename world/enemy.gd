@@ -80,9 +80,28 @@ func _ready() -> void:
 	mat.albedo_color = color
 	mat.emission_enabled = true
 	mat.emission = color * (0.9 if bool(def.boss) or elite != "" else 0.3)
+	# Chameleons fade into the walls; ghosts are barely there at all.
+	if def.get("stealth", false) or def.get("ghost", false):
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color.a = 0.25 if def.get("ghost", false) else 0.12
 	_mesh.material_override = mat
 	_mesh.position.y = _mesh_base_y
 	add_child(_mesh)
+	# Glowing eyes — the one thing you can always spot.
+	for side in [-0.12, 0.12]:
+		var eye := MeshInstance3D.new()
+		var em := SphereMesh.new()
+		em.radius = 0.06 * size
+		em.height = 0.12 * size
+		eye.mesh = em
+		var emat := StandardMaterial3D.new()
+		var ecol := Color(1, 0.9, 0.3) if disp != "hostile" else Color(1, 0.25, 0.2)
+		emat.albedo_color = ecol
+		emat.emission_enabled = true
+		emat.emission = ecol * 2.0
+		eye.material_override = emat
+		eye.position = Vector3(side * size, _mesh_base_y * 1.5, -0.3 * size)
+		add_child(eye)
 
 	var label := Label3D.new()
 	var tag := ""
@@ -128,7 +147,7 @@ func tick_ai(players: Dictionary, world) -> void:
 		var nd := 10.0
 		for pid in players:
 			var p = world.get_player(pid)
-			if p != null and not players[pid].in_enc:
+			if p != null and not players[pid].in_enc and not _is_invisible(players[pid]):
 				var d: float = p.global_position.distance_to(global_position)
 				if d < nd:
 					nd = d
@@ -138,12 +157,28 @@ func tick_ai(players: Dictionary, world) -> void:
 			dir.y = 0
 			dir = dir.normalized()
 			speed = 2.2
+	# Ghosts drift straight through walls; the living walk and climb.
+	if Db.ENEMIES[type].get("ghost", false):
+		global_position += dir * speed * 0.6 * delta
+		return
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	velocity.y -= GRAVITY * delta
 	if is_on_wall() and is_on_floor():
 		velocity.y = 7.0
 	move_and_slide()
+
+
+## Veilwalk buffs and Shadow Cloaks hide players from stalking eyes.
+func _is_invisible(rec: Dictionary) -> bool:
+	var now := Time.get_ticks_msec()
+	for b in rec.get("buffs", []):
+		if b.k == "invis" and int(b.until) > now:
+			return true
+	for it in rec.get("inv", []):
+		if it != null and Db.item_def(it.id).get("stealth", false):
+			return true
+	return false
 
 
 func die() -> void:

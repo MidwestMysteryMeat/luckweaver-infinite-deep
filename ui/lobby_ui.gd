@@ -65,6 +65,13 @@ func _init(main_ref) -> void:
 	lrow.add_child(_loot_desc)
 	root.add_child(lrow)
 
+	var ff := CheckBox.new()
+	ff.text = "Friendly fire (area spells & bombs harm allies)"
+	ff.button_pressed = Game.friendly_fire
+	ff.disabled = not Game.is_server()
+	ff.toggled.connect(func(on): Game.request_set_ff(on))
+	root.add_child(ff)
+
 	_start = UITheme.button("▶  Start the Run")
 	_start.visible = Game.is_server()
 	_start.pressed.connect(func(): Game.request_start_run())

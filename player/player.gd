@@ -170,8 +170,16 @@ func _local_move(delta: float) -> void:
 				inverted = true
 	if asleep:
 		dir = Vector3.ZERO
+	if rec.get("injuries", {}).has("legs"):
+		speed *= 0.8
 	if _cam != null:
 		_cam.rotation.z = lerp_angle(_cam.rotation.z, PI if inverted else 0.0, 0.1)
+	# Veilwalk: fade your avatar (mostly for your allies' benefit).
+	var invis_now := false
+	for b in rec.get("buffs", []):
+		if b.k == "invis" and int(b.until) > now:
+			invis_now = true
+	_body_mesh.transparency = 0.85 if invis_now else 0.0
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	move_and_slide()
@@ -314,6 +322,8 @@ func _do_interact() -> void:
 			Game.request_interact("door", p)
 		Blocks.CAMPFIRE:
 			Events.open_bench.emit("cook")
+		Blocks.WAYSTONE:
+			Events.open_bench.emit("waystone")
 		Blocks.BENCH_SMITH:
 			Events.open_bench.emit("smith")
 		Blocks.BENCH_ENCH:
