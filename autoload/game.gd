@@ -6,7 +6,7 @@ extends Node
 
 const REACH := 5.5
 const PICKUP_RADIUS := 1.7
-const INV_SIZE := 27
+const INV_SIZE := 36  # Minecraft-true: 27 storage + 9 hotbar
 const BREATH_MAX := 20.0
 
 # ---- session ----
@@ -164,6 +164,8 @@ func _record_for(pid: int, pname: String, class_id: String, chr: Dictionary) -> 
 		if not rec.has("mana"):
 			rec.mana = 40
 			rec.max_mana = 40 + (int(rec.get("level", 1)) - 1) * 5
+		while rec.inv.size() < INV_SIZE:  # older 27-slot characters
+			rec.inv.append(null)
 		return rec
 	return _new_record(pid, pname, class_id)
 
@@ -1688,14 +1690,98 @@ func _server_start_encounter(pid: int, eid: int, _ranged := false) -> void:
 			return
 		_server_hunt(pid, eid)
 		return
-	if String(e.get("disp", "hostile")) == "hostile":
-		return  # swing at it — this is real-time now
-	e.in_combat = true
-	rec.in_enc = true
-	var enc := Encounter.new(self, pid, eid)
-	encounters[pid] = enc
-	enc.start()
+	# Text parley is gone — neutrals use the Minecraft-simple trade window
+	# (sv_npc_trade / sv_npc_quest); hostiles just get hit.
+	return
+
+
+# ---------------------------------------------------------------- npc (simple)
+
+func request_npc_trade(eid: int, idx: int) -> void:
+	if is_server():
+		sv_npc_trade(eid, idx)
+	else:
+		rpc_id(1, "sv_npc_trade", eid, idx)
+
+
+@rpc("any_peer", "reliable")
+func sv_npc_trade(eid: int, idx: int) -> void:
+	if not is_server():
+		return
+	var pid := _sender()
+	var rec: Dictionary = players.get(pid, {})
+	var e: Dictionary = enemies.get(eid, {})
+	if rec.is_empty() or e.is_empty() or not e.alive or String(e.get("disp", "")) != "neutral":
+		return
+	var trades: Array = Db.ENEMIES[e.type].get("trades", [])
+	if idx < 0 or idx >= trades.size():
+		return
+	var id: String = trades[idx]
+	var price := int(Db.item_def(id).value * 1.2 * (1.0 - minf(int(rec.get("rep", 0)) * 0.05, 0.25)))
+	if rec.gold < price:
+		send_to(pid, "cl_notify", ["Not enough gold (%d needed)." % price])
+		return
+	if give_item(pid, id, 1, {}):
+		rec.gold -= price
+		send_to(pid, "cl_notify", ["Bought %s for %d gold." % [Db.item_def(id).name, price]])
 	_sync_player(pid)
+
+
+func request_npc_quest(eid: int) -> void:
+	if is_server():
+		sv_npc_quest(eid)
+	else:
+		rpc_id(1, "sv_npc_quest", eid)
+
+
+## One-click quests: none → take one; done → turn in; else → progress toast.
+@rpc("any_peer", "reliable")
+func sv_npc_quest(eid: int) -> void:
+	if not is_server():
+		return
+	var pid := _sender()
+	var rec: Dictionary = players.get(pid, {})
+	var e: Dictionary = enemies.get(eid, {})
+	if rec.is_empty() or e.is_empty() or not e.alive:
+		return
+	var q: Dictionary = quests.get(pid, {})
+	var rep := int(rec.get("rep", 0))
+	if q.is_empty():
+		var kill_types: Array = []
+		for t in Db.ENEMIES:
+			var d2: Dictionary = Db.ENEMIES[t]
+			if String(d2.get("disposition", "hostile")) == "hostile" and not d2.boss \
+					and floor_num >= int(d2.min_floor) and int(d2.min_floor) < 99:
+				kill_types.append(t)
+		if randf() < 0.6 and not kill_types.is_empty():
+			var kt: String = kill_types[randi() % kill_types.size()]
+			q = {"type": "kill", "target": kt, "n": randi_range(2, 4) + rep / 2, "done": 0,
+				"reward": int((60 + floor_num * 25) * (1.0 + rep * 0.2))}
+			send_to(pid, "cl_notify", ["QUEST: slay %d %ss → %d gold." % [int(q.n), Db.ENEMIES[kt].name, int(q.reward)]])
+		else:
+			var wants := ["wheat", "hog_meat", "kelp", "luckroot", "bone"]
+			var w: String = wants[randi() % wants.size()]
+			q = {"type": "gather", "target": w, "n": randi_range(3, 5), "done": 0,
+				"reward": int((50 + floor_num * 20) * (1.0 + rep * 0.2))}
+			send_to(pid, "cl_notify", ["QUEST: bring %d %s → %d gold." % [int(q.n), Db.item_def(w).name, int(q.reward)]])
+		quests[pid] = q
+	elif q.type == "kill" and int(q.done) >= int(q.n):
+		reward_gold(pid, int(q.reward))
+		grant_xp(pid, int(q.reward) / 2)
+		quests.erase(pid)
+		quest_completed(pid, String(e.type))
+		send_to(pid, "cl_notify", ["QUEST COMPLETE: +%d gold." % int(q.reward)])
+	elif q.type == "gather" and _count_of(rec, String(q.target)) >= int(q.n):
+		_consume_id(rec, String(q.target), int(q.n))
+		reward_gold(pid, int(q.reward))
+		grant_xp(pid, int(q.reward) / 2)
+		quests.erase(pid)
+		quest_completed(pid, String(e.type))
+		send_to(pid, "cl_notify", ["QUEST COMPLETE: +%d gold." % int(q.reward)])
+	else:
+		var need: String = Db.ENEMIES[q.target].name if q.type == "kill" else Db.item_def(q.target).name
+		send_to(pid, "cl_notify", ["Quest: %d/%d %s." % [int(q.done) if q.type == "kill"
+			else _count_of(rec, String(q.target)), int(q.n), need]])
 
 
 ## Aimed bow shot: consumes an arrow and resolves as a live ranged strike
@@ -2324,7 +2410,8 @@ func _server_tick_enemies() -> void:
 			node.tick_ai(players, world)
 		e.pos = node.global_position
 		posmap[eid] = e.pos
-		# Real-time attacks: hostiles swing at whoever is in reach, on their
+		# Provoked neutrals fight like hostiles.
+	# Real-time attacks: hostiles swing at whoever is in reach, on their
 		# own cooldown (e.cooldown doubles as attack timer).
 		if String(e.get("disp", "hostile")) == "hostile" and e.cooldown <= 0.0:
 			var reach := 7.5 if bool(Db.ENEMIES[e.type].get("ranged", false)) else ENEMY_ATK_RANGE

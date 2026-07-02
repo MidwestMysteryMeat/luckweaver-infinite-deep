@@ -426,7 +426,11 @@ func _do_place_or_use() -> void:
 func _do_interact() -> void:
 	var a := aim()
 	if a.kind == "enemy":
-		Game.request_encounter(int(a.eid))
+		var node = a.get("node")
+		if node != null and node.disp == "neutral":
+			Events.open_bench.emit("npc:%d" % int(a.eid))
+		else:
+			Game.request_encounter(int(a.eid))
 		return
 	if a.kind != "block":
 		return
@@ -490,7 +494,7 @@ func aim_prompt() -> String:
 					return "E — Pet %s" % ename
 				return "E — Hunt %s (hold wheat to tame)" % ename
 			"neutral":
-				return "E — Talk to %s" % ename
+				return "E — Trade with %s (LMB attacks)" % ename
 			_:
 				return "LMB — Attack %s" % ename
 	if a.kind == "block":

@@ -133,6 +133,8 @@ func _on_open_bench(kind: String) -> void:
 		_open_ui(WaystoneUI.new(self))
 	elif kind.begins_with("chest:"):
 		_open_ui(StorageUI.new(self, kind.substr(6)))
+	elif kind.begins_with("npc:"):
+		_open_ui(NpcUI.new(self, int(kind.substr(4))))
 	else:
 		_open_ui(CraftUI.new(self, kind))
 

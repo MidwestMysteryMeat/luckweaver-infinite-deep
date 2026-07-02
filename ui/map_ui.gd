@@ -24,7 +24,7 @@ func _init(main_ref) -> void:
 	_tex.stretch_mode = TextureRect.STRETCH_SCALE
 	_tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	root.add_child(_tex)
-	_marker_info = UITheme.label("bright = open floor · dark = rock · ● you (yellow) · ◆ waystone (cyan) · ▼ portal (gold)", 13, UITheme.DIM)
+	_marker_info = UITheme.label("48×48 around YOU (center dot) · bright = open floor · dark = rock · cyan = waystone · gold = portal", 13, UITheme.DIM)
 	_marker_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_marker_info)
 	var close := UITheme.button("Close (M)", 14)
@@ -40,9 +40,19 @@ func refresh() -> void:
 	var vw = Game.voxel
 	if vw == null:
 		return
-	var img := Image.create(VoxelWorld.SX, VoxelWorld.SZ, false, Image.FORMAT_RGBA8)
-	for x in range(VoxelWorld.SX):
-		for z in range(VoxelWorld.SZ):
+	# Player-centered 48×48 window, blown up — reads like a minimap page,
+	# and the same approach will pan seamlessly on the infinite world.
+	var p0 = main.local_player()
+	var cx := VoxelWorld.SX / 2
+	var cz := VoxelWorld.SZ / 2
+	if p0 != null:
+		cx = clampi(int(p0.global_position.x), 24, VoxelWorld.SX - 24)
+		cz = clampi(int(p0.global_position.z), 24, VoxelWorld.SZ - 24)
+	var img := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	for mx in range(48):
+		for mz in range(48):
+			var x := cx - 24 + mx
+			var z := cz - 24 + mz
 			# High contrast: solid rock is near-black, walkable floor is the
 			# bright block color — rooms and corridors pop out as light shapes.
 			var col := Color(0.06, 0.05, 0.09)
@@ -58,23 +68,25 @@ func refresh() -> void:
 					if def.glow:
 						col = col.lightened(0.3)
 				break
-			img.set_pixel(x, z, col)
-	# Markers: gold = portal down, cyan = waystones, yellow = you.
+			img.set_pixel(mx, mz, col)
+	# Markers (window-relative): gold = portal down, cyan = waystones, ● = you.
 	var pp: Array = Game.gen_info.get("portal_pos", [])
 	if pp.size() == 3:
-		_blot(img, int(pp[0]), int(pp[2]), Color(1.0, 0.75, 0.1))
+		_blot(img, int(pp[0]) - cx + 24, int(pp[2]) - cz + 24, Color(1.0, 0.75, 0.1))
 	for key in Game.waystones:
 		var wp: Vector3 = Game.waystones[key].pos
-		_blot(img, int(wp.x), int(wp.z), Color(0.4, 0.8, 1.0))
-	var p = main.local_player()
-	if p != null:
-		_blot(img, int(p.global_position.x), int(p.global_position.z), Color(1, 1, 0.3))
+		_blot(img, int(wp.x) - cx + 24, int(wp.z) - cz + 24, Color(0.4, 0.8, 1.0))
+	if p0 != null:
+		_blot(img, int(p0.global_position.x) - cx + 24, int(p0.global_position.z) - cz + 24,
+			Color(1, 1, 0.3))
 	_tex.texture = ImageTexture.create_from_image(img)
 
 
 func _blot(img: Image, x: int, z: int, col: Color) -> void:
+	if x < -1 or z < -1 or x > 48 or z > 48:
+		return  # off this window
 	for dx in range(-1, 2):
 		for dz in range(-1, 2):
-			var px := clampi(x + dx, 0, VoxelWorld.SX - 1)
-			var pz := clampi(z + dz, 0, VoxelWorld.SZ - 1)
+			var px := clampi(x + dx, 0, 47)
+			var pz := clampi(z + dz, 0, 47)
 			img.set_pixel(px, pz, col)

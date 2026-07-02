@@ -429,14 +429,13 @@ func _run_test(main) -> void:
 		if String(Game.enemies[eid].get("disp", "")) == "neutral" and Game.enemies[eid].alive:
 			folk = eid
 	if folk >= 0:
-		Events.enc_state.connect(_on_enc_state)
-		Game._server_start_encounter(1, folk)
-		_check(String(_st.get("phase", "")) == "npc", "neutral parley menu opens")
-		Game.request_enc_action("talk")
-		Game.request_enc_action("leave")
-		Events.enc_state.disconnect(_on_enc_state)
+		Game.request_npc_quest(folk)
+		_check(Game.quests.has(1), "one-click quest accepted from villager")
+		Game.my_rec().gold = 500
+		Game.request_npc_trade(folk, 0)
+		_check(int(Game.my_rec().gold) < 500, "simple trade window purchase works")
 	else:
-		print("  (no neutral mob this floor — parley check skipped)")
+		print("  (no neutral mob this floor — npc checks skipped)")
 
 	print("[smoke] fishing: cast, catch, fillet")
 	Game.give_item(1, "pole_wood", 1, {})
@@ -458,9 +457,12 @@ func _run_test(main) -> void:
 		print("  (junk/treasure bite this cast — fillet path not exercised)")
 
 	print("[smoke] storage chest: deposit + withdraw, spellbinding")
-	Game.give_item(1, "chest_store", 1, {})
-	var csp := Vector3i(int(p.global_position.x) - 2, 3, int(p.global_position.z) + 2)
-	Game.request_place(csp, _find_slot("chest_store"))
+	# Direct op placement: player may have teleported next to furniture, so
+	# request_place's air-check is position-luck — the tracking hook is the
+	# thing under test, and it lives in _apply_edit either way.
+	var csp := Vector3i(int(p.global_position.x) - 2, 4, int(p.global_position.z) + 2)
+	Game._apply_edit({"t": "set", "p": [csp.x, csp.y, csp.z], "b": Blocks.AIR})
+	Game._apply_edit({"t": "set", "p": [csp.x, csp.y, csp.z], "b": Blocks.CHEST_STORE})
 	var ckey := "%d,%d,%d" % [csp.x, csp.y, csp.z]
 	_check(Game.chest_store.has(ckey), "placed chest registered")
 	Game.give_item(1, "bone", 3, {})
