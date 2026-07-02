@@ -20,6 +20,12 @@ Game="*res://autoload/game.gd"
 SaveMgr="*res://autoload/save_mgr.gd"
 AudioMgr="*res://autoload/audio_mgr.gd"
 
+[debug]
+
+file_logging/enable_file_logging=true
+file_logging/enable_file_logging.pc=true
+file_logging/max_log_files=10
+
 [display]
 
 window/size/viewport_width=1600

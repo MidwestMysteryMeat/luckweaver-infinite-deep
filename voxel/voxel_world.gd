@@ -41,6 +41,10 @@ var _fluid_steps := 0
 func _ready() -> void:
 	data.resize(SX * SY * SZ)
 	light.resize(SX * SY * SZ)
+	# Pre-warm the atlas + materials on the main thread before any worker
+	# touches them (lazy statics racing across threads = startup crash).
+	Blocks.material()
+	Blocks.material_translucent()
 	_create_chunk_nodes()
 
 
@@ -166,9 +170,10 @@ func flush_dirty(budget: int) -> void:
 		_apply_built(batch[i], results[i])
 
 
+## MAIN THREAD ONLY: turns worker-built arrays into mesh + collision.
 func _apply_built(cc: Vector3i, built: Dictionary) -> void:
 	var ch: Dictionary = chunks[cc]
-	ch.mesh.mesh = built.mesh
+	ch.mesh.mesh = Mesher.make_mesh(built)
 	if built.faces.size() > 0:
 		var shape := ConcavePolygonShape3D.new()
 		shape.set_faces(built.faces)
@@ -183,15 +188,7 @@ func flush_all() -> void:
 
 
 func _rebuild_chunk(cc: Vector3i) -> void:
-	var built := Mesher.build(self, cc * CH, CH)
-	var ch: Dictionary = chunks[cc]
-	ch.mesh.mesh = built.mesh
-	if built.faces.size() > 0:
-		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(built.faces)
-		ch.shape.shape = shape
-	else:
-		ch.shape.shape = null
+	_apply_built(cc, Mesher.build(self, cc * CH, CH))
 
 
 # ---------------------------------------------------------------- lighting

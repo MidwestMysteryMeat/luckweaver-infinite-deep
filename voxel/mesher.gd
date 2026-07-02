@@ -94,28 +94,41 @@ static func build(vw, origin: Vector3i, size: int) -> Dictionary:
 						col_faces.append(Vector3(lp) + fv[2])
 						col_faces.append(Vector3(lp) + fv[3])
 
-	var out := {"mesh": null, "faces": col_faces}
-	if verts.size() > 0 or t_verts.size() > 0:
-		var mesh := ArrayMesh.new()
-		if verts.size() > 0:
-			var arrays := []
-			arrays.resize(Mesh.ARRAY_MAX)
-			arrays[Mesh.ARRAY_VERTEX] = verts
-			arrays[Mesh.ARRAY_NORMAL] = normals
-			arrays[Mesh.ARRAY_COLOR] = colors
-			arrays[Mesh.ARRAY_TEX_UV] = uvs
-			arrays[Mesh.ARRAY_INDEX] = indices
-			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-			mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material())
-		if t_verts.size() > 0:
-			var t_arrays := []
-			t_arrays.resize(Mesh.ARRAY_MAX)
-			t_arrays[Mesh.ARRAY_VERTEX] = t_verts
-			t_arrays[Mesh.ARRAY_NORMAL] = t_normals
-			t_arrays[Mesh.ARRAY_COLOR] = t_colors
-			t_arrays[Mesh.ARRAY_TEX_UV] = t_uvs
-			t_arrays[Mesh.ARRAY_INDEX] = t_indices
-			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, t_arrays)
-			mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material_translucent())
-		out.mesh = mesh
+	# THREAD SAFETY: build() runs on worker threads, so it only assembles raw
+	# arrays. make_mesh() turns them into GPU resources on the MAIN thread —
+	# creating meshes/materials off-thread crashes the real Vulkan renderer
+	# (the headless test renderer never noticed).
+	var out := {"arrays": null, "t_arrays": null, "faces": col_faces}
+	if verts.size() > 0:
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_COLOR] = colors
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		arrays[Mesh.ARRAY_INDEX] = indices
+		out.arrays = arrays
+	if t_verts.size() > 0:
+		var t_arrays := []
+		t_arrays.resize(Mesh.ARRAY_MAX)
+		t_arrays[Mesh.ARRAY_VERTEX] = t_verts
+		t_arrays[Mesh.ARRAY_NORMAL] = t_normals
+		t_arrays[Mesh.ARRAY_COLOR] = t_colors
+		t_arrays[Mesh.ARRAY_TEX_UV] = t_uvs
+		t_arrays[Mesh.ARRAY_INDEX] = t_indices
+		out.t_arrays = t_arrays
 	return out
+
+
+## MAIN THREAD ONLY: raw arrays → ArrayMesh with materials.
+static func make_mesh(built: Dictionary) -> ArrayMesh:
+	if built.arrays == null and built.t_arrays == null:
+		return null
+	var mesh := ArrayMesh.new()
+	if built.arrays != null:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, built.arrays)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material())
+	if built.t_arrays != null:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, built.t_arrays)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, Blocks.material_translucent())
+	return mesh
