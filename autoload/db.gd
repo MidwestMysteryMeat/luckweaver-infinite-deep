@@ -320,6 +320,18 @@ const ENEMIES := {
 		"ranged": true, "resist": ["poison"], "weak": ["physical"],
 		"drops": [{"id": "arrow", "count": 4}, {"id": "bone", "count": 1}],
 		"shape": "tall", "size": 1.0, "color": Color(0.8, 0.78, 0.68)},
+	"gloom_shaman": {"name": "Gloom Shaman", "hp": 42, "ac": 12, "atk": 5, "dmg": [1, 8, 1],
+		"xp": 52, "special": "curse", "spec_chance": 0.35, "min_floor": 5, "boss": false,
+		"ranged": true, "weak": ["dark"],
+		"shape": "capsule", "size": 1.0, "color": Color(0.45, 0.35, 0.6)},
+	"acid_lobber": {"name": "Acid Lobber", "hp": 50, "ac": 10, "atk": 4, "dmg": [1, 10, 0],
+		"xp": 56, "special": "acid_spit", "spec_chance": 0.4, "min_floor": 6, "boss": false,
+		"ranged": true, "resist": ["poison"], "weak": ["fire", "frost"],
+		"shape": "blob", "size": 1.1, "color": Color(0.5, 0.75, 0.3)},
+	"frost_wisp": {"name": "Frost Wisp", "hp": 34, "ac": 14, "atk": 5, "dmg": [1, 6, 2],
+		"xp": 48, "special": "luck_drain", "spec_chance": 0.3, "min_floor": 5, "boss": false,
+		"ranged": true, "resist": ["frost", "physical"], "weak": ["fire"],
+		"shape": "tall", "size": 0.9, "color": Color(0.7, 0.85, 0.95)},
 	# --- bosses (picked by the floor's biome; signature drops in BOSS_DROPS)
 	"pit_boss": {"name": "The Vault Tyrant", "hp": 300, "ac": 15, "atk": 6, "dmg": [2, 6, 2],
 		"xp": 250, "special": "multiattack", "spec_chance": 0.25, "min_floor": 1, "boss": true,
@@ -372,6 +384,44 @@ const ELITES := {
 	"cursed": {"name": "Cursed", "hp": 1.2, "atk": 2, "ac": 0, "gold": 1.5, "color": Color(0.85, 0.2, 0.35)},
 	"ancient": {"name": "Ancient", "hp": 1.8, "atk": 1, "ac": 2, "gold": 2.0, "color": Color(0.6, 0.85, 0.7)},
 }
+
+## Perk trees: allocating skill points (K) unlocks named perks at 1 / 3 / 5
+## points in a discipline. Each grants a passive key the systems already read.
+const PERKS := {
+	"combat": [
+		{"at": 1, "name": "Duelist", "key": "atk_perm", "val": 1.0, "desc": "+1 attack"},
+		{"at": 3, "name": "Executioner", "key": "soul_strike", "val": 0.25, "desc": "crits +25%"},
+		{"at": 5, "name": "Warlord", "key": "atk_perm", "val": 2.0, "desc": "+2 attack"}],
+	"mining": [
+		{"at": 1, "name": "Prospector's Nose", "key": "mine_speed", "val": 0.15, "desc": "+15% mining"},
+		{"at": 3, "name": "Blast Miner", "key": "mine_speed", "val": 0.25, "desc": "+25% mining"},
+		{"at": 5, "name": "Earthbreaker", "key": "mine_speed", "val": 0.35, "desc": "+35% mining"}],
+	"smithing": [
+		{"at": 1, "name": "Fine Temper", "key": "smith_quality", "val": 1.0, "desc": "+1 forged quality"},
+		{"at": 3, "name": "Master Temper", "key": "smith_quality", "val": 1.0, "desc": "+1 more quality"},
+		{"at": 5, "name": "Runeforged", "key": "smith_quality", "val": 1.0, "desc": "+1 more quality"}],
+	"alchemy": [
+		{"at": 1, "name": "Steady Hands", "key": "alch_bonus", "val": 3.0, "desc": "+potency"},
+		{"at": 3, "name": "Toxicologist", "key": "alch_bonus", "val": 5.0, "desc": "++potency"},
+		{"at": 5, "name": "Philosopher", "key": "alch_bonus", "val": 8.0, "desc": "+++potency"}],
+	"cooking": [
+		{"at": 1, "name": "Seasoned", "key": "cook_bonus", "val": 3.0, "desc": "+meal potency"},
+		{"at": 3, "name": "Feastmaster", "key": "cook_bonus", "val": 5.0, "desc": "++meal potency"},
+		{"at": 5, "name": "Ambrosia", "key": "cook_bonus", "val": 8.0, "desc": "+++meal potency"}],
+	"spellcraft": [
+		{"at": 1, "name": "Attuned", "key": "spell_bonus", "val": 8.0, "desc": "+spell power"},
+		{"at": 3, "name": "Runebinder", "key": "spell_bonus", "val": 12.0, "desc": "++spell power"},
+		{"at": 5, "name": "Archmage", "key": "spell_bonus", "val": 15.0, "desc": "+++spell power"}],
+	"enchanting": [
+		{"at": 1, "name": "Gleamwright", "key": "ench_bonus", "val": 8.0, "desc": "+enchant power"},
+		{"at": 3, "name": "Soulsmith", "key": "ench_bonus", "val": 12.0, "desc": "++enchant power"},
+		{"at": 5, "name": "Godtouched", "key": "ench_bonus", "val": 15.0, "desc": "+++enchant power"}],
+	"fishing": [
+		{"at": 1, "name": "Patient Line", "key": "fish_bonus", "val": 6.0, "desc": "+catch quality"},
+		{"at": 3, "name": "Deep Caster", "key": "fish_bonus", "val": 10.0, "desc": "++catch quality"},
+		{"at": 5, "name": "Tidewhisperer", "key": "fish_bonus", "val": 14.0, "desc": "+++catch quality"}],
+}
+
 
 ## Signature loot per boss, on top of the usual caches.
 const BOSS_DROPS := {

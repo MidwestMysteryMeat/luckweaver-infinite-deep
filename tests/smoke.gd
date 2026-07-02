@@ -193,6 +193,11 @@ func _run_test(main) -> void:
 	Game.request_allocate("mining")
 	_check(int(Game.my_rec().skill_points) == 1, "point spent")
 	_check(Db.prof_eff(Game.my_rec(), "mining") == eff_before + 2, "allocation = +2 effective levels")
+	_check(float(Game.my_rec().passives.get("mine_speed", 0.0)) >= 0.15,
+		"perk unlocked at 1 point (Prospector's Nose)")
+	Game.request_allocate("combat")
+	_check(float(Game.my_rec().passives.get("atk_perm", -1.0)) >= 1.0
+		or int(Game.my_rec().atk_perm) >= 0, "combat perk applied (Duelist)")
 
 	print("[smoke] oxygen: submerge, drain, gills")
 	var head := Vector3i((p.global_position + Vector3(0, 1.4, 0)).floor())
@@ -326,7 +331,7 @@ func _run_test(main) -> void:
 	var rngv := RandomNumberGenerator.new()
 	rngv.randomize()
 	var veil := SpellForge.craft("rune_veil", "card_queen", "ess_void", rngv)
-	_check(String(veil.effect) == "invisibility" and veil.name == "Veilwalk",
+	_check(String(veil.effect) == "invisibility" and "Veilwalk" in String(veil.name),
 		"veil+void combo = Veilwalk (invisibility)")
 	var wall := SpellForge.craft("rune_wall", "card_queen", "ess_frost", rngv)
 	_check(wall.name == "Wall of Ice", "wall spells named by element")

@@ -350,7 +350,8 @@ func _server_tick_fishing() -> void:
 			continue
 		award_prof(pid, "fishing", 6)
 		var score: float = eff_luck(rec) * 0.3 + float(f.pole) * 8.0 \
-			+ (15.0 if f.bait else 0.0) + Db.prof_eff(rec, "fishing")
+			+ (15.0 if f.bait else 0.0) + Db.prof_eff(rec, "fishing") \
+			+ float(rec.passives.get("fish_bonus", 0.0))
 		var roll := randf() * 100.0
 		if roll < maxf(28.0 - score * 0.2, 6.0):
 			var junk: String = ["kelp", "bone", "gravel"][randi() % 3]
@@ -1076,7 +1077,7 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 			if not (_slot_kind(rec, rs) == "rune" and _slot_kind(rec, cs) == "card" and _slot_kind(rec, es) == "essence"):
 				return
 			var meta := SpellForge.craft(rec.inv[rs].id, rec.inv[cs].id, rec.inv[es].id, rng,
-				Db.prof_eff(rec, "spellcraft"))
+				Db.prof_eff(rec, "spellcraft") + int(rec.passives.get("spell_bonus", 0.0)))
 			_consume(rec, rs, 1)
 			_consume(rec, cs, 1)
 			_consume(rec, es, 1)
@@ -1092,7 +1093,8 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 				if _slot_kind(rec, int(s)) != "ingredient":
 					return
 				ids.append(rec.inv[int(s)].id)
-			var meta2 := Alchemy.brew(ids, rng, Db.prof_eff(rec, "alchemy"))
+			var meta2 := Alchemy.brew(ids, rng,
+				Db.prof_eff(rec, "alchemy") + int(rec.passives.get("alch_bonus", 0.0)))
 			for s in slots:
 				_consume(rec, int(s), 1)
 			give_item(pid, "potion", 1, meta2)
@@ -1129,7 +1131,8 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 				if _slot_kind(rec, int(s)) != "ingredient":
 					return
 				ids2.append(rec.inv[int(s)].id)
-			var meal := Cooking.cook(ids2, rng, Db.prof_eff(rec, "cooking"))
+			var meal := Cooking.cook(ids2, rng,
+				Db.prof_eff(rec, "cooking") + int(rec.passives.get("cook_bonus", 0.0)))
 			award_prof(pid, "cooking", 8)
 			for s in slots2:
 				_consume(rec, int(s), 1)
@@ -1161,7 +1164,8 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 					return
 			for mat in recipe.mats:
 				_consume_id(rec, mat, int(recipe.mats[mat]))
-			var q: int = eff / 10 + (1 if rng.randf() < 0.15 else 0)
+			var q: int = eff / 10 + int(rec.passives.get("smith_quality", 0.0)) \
+				+ (1 if rng.randf() < 0.15 else 0)
 			var smeta := {}
 			if q > 0:
 				smeta = {"quality": q,
@@ -1220,7 +1224,8 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 				send_to(pid, "cl_notify", ["Enchanting takes 2 matching essences and 30 gold."])
 				return
 			var element: String = Db.item_def(rec.inv[es2].id).element
-			var epow: int = 1 + Db.prof_eff(rec, "enchanting") / 15
+			var epow: int = 1 + (Db.prof_eff(rec, "enchanting")
+				+ int(rec.passives.get("ench_bonus", 0.0))) / 15
 			_consume(rec, es2, 2)
 			rec.gold -= 30
 			var gmeta: Dictionary = rec.inv[ga].meta
@@ -1406,7 +1411,7 @@ func weapon_of(rec: Dictionary) -> Dictionary:
 func atk_bonus_of(rec: Dictionary, w: Dictionary) -> int:
 	var c: Dictionary = Db.CLASSES[rec.class_id]
 	var b: int = int(c.atk) + int(rec.level) / 2 + int(rec.get("atk_perm", 0)) \
-		+ Db.prof_eff(rec, "combat") / 8
+		+ int(rec.passives.get("atk_perm", 0.0)) + Db.prof_eff(rec, "combat") / 8
 	if not w.is_empty():
 		b += int(w.def.get("atk", 0))
 	if rec.get("injuries", {}).has("arms"):
@@ -1896,6 +1901,11 @@ func sv_allocate(skill: String) -> void:
 		return
 	rec.skill_points = int(rec.skill_points) - 1
 	rec.alloc[skill] = int(rec.get("alloc", {}).get(skill, 0)) + 1
+	# Perk thresholds: named perks unlock at 1 / 3 / 5 points.
+	for perk in Db.PERKS.get(skill, []):
+		if int(rec.alloc[skill]) == int(perk.at):
+			rec.passives[perk.key] = float(rec.passives.get(perk.key, 0.0)) + float(perk.val)
+			send_to(int(rec.pid), "cl_notify", ["PERK UNLOCKED: %s — %s!" % [perk.name, perk.desc]])
 	send_to(int(rec.pid), "cl_notify", ["%s mastery deepens (+2 effective levels)." % skill.capitalize()])
 	_sync_player(int(rec.pid))
 
@@ -2161,7 +2171,8 @@ func _server_tick_enemy_statuses() -> void:
 
 var _ambush_t := 150.0
 
-## Timed floor events: every couple of minutes the dark sends an ambush.
+## Timed floor events, one of five every couple of minutes: ambushes, gold
+## rushes, cave-ins, gas leaks, and wandering merchants.
 func _server_tick_ambush() -> void:
 	if floor_num <= 0 or players.is_empty():
 		return
@@ -2174,13 +2185,33 @@ func _server_tick_ambush() -> void:
 	var p = world.get_player(target)
 	if p == null:
 		return
+	var at: Vector3 = p.global_position
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	rpc("cl_notify", "⚠ AMBUSH — the dark closes in on %s!" % players[target].name)
-	for i in range(2 + party().n / 2):
-		var a := randf() * TAU
-		_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat),
-			p.global_position + Vector3(cos(a) * 6.0, 1.0, sin(a) * 6.0))
+	match randi() % 5:
+		0, 1:  # ambush (most common)
+			rpc("cl_notify", "⚠ AMBUSH — the dark closes in on %s!" % players[target].name)
+			for i in range(2 + party().n / 2):
+				var a := randf() * TAU
+				_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat),
+					at + Vector3(cos(a) * 6.0, 1.0, sin(a) * 6.0))
+		2:  # gold rush
+			rpc("cl_notify", "✨ GOLD RUSH — a rich vein splits the stone near %s!" % players[target].name)
+			_apply_edit({"t": "sphere_replace", "p": [int(at.x) + 4, int(at.y), int(at.z)],
+				"r": 2.5, "from": [Blocks.STONE, Blocks.BRICK, Blocks.DIRT], "b": Blocks.GOLD_ORE})
+		3:  # cave-in: gravel pours from above and cascades down
+			rpc("cl_notify", "⚠ CAVE-IN above %s — the ceiling gives way!" % players[target].name)
+			_apply_edit({"t": "sphere", "p": [int(at.x), int(at.y) + 5, int(at.z)],
+				"r": 2.0, "b": Blocks.GRAVEL})
+			hurt_player(target, 6, "falling rock")
+		4:  # gas leak or merchant
+			if randf() < 0.5:
+				rpc("cl_notify", "☠ GAS LEAK — something hisses out of the cracked floor!")
+				spawn_gas_cloud(at + Vector3(3, 1, 0), 2.2,
+					[Blocks.GAS_POISON_2, Blocks.GAS_SLEEP_2][randi() % 2])
+			else:
+				rpc("cl_notify", "🏮 A wandering merchant's lantern bobs toward %s." % players[target].name)
+				_server_spawn_enemy("lost_explorer", at + Vector3(5, 1, 2))
 
 
 func _server_tick_camps_and_regen() -> void:

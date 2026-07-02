@@ -69,3 +69,11 @@ func refresh() -> void:
 		plus.pressed.connect(func(): Game.request_allocate(sid))
 		row.add_child(plus)
 		_rows.add_child(row)
+		# Perk chips: unlocked at 1 / 3 / 5 allocated points.
+		var bits: Array = []
+		for perk in Db.PERKS.get(skill, []):
+			bits.append("%s %s" % ["✦" if alloc >= int(perk.at) else "·",
+				perk.name if alloc >= int(perk.at) else "%s (%d pts)" % [perk.name, int(perk.at)]])
+		var pl := UITheme.label("   " + "   ".join(bits), 11,
+			UITheme.GOLD if alloc > 0 else UITheme.DIM)
+		_rows.add_child(pl)
