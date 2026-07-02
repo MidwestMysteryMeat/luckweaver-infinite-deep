@@ -20,6 +20,7 @@ var _head: Node3D
 var _cam: Camera3D
 var _label: Label3D
 var _body_mesh: MeshInstance3D
+var _body_model: Node3D = null
 var _net_accum := 0.0
 var _net_pos := Vector3.ZERO
 var _net_yaw := 0.0
@@ -50,18 +51,26 @@ func _ready() -> void:
 	var rec: Dictionary = Game.players.get(pid, {})
 	var cls: Dictionary = Db.CLASSES.get(rec.get("class_id", "cardsharp"), Db.CLASSES.cardsharp)
 
+	# Blockbench class model; capsule fallback if the art isn't there.
+	var mdl := ModelDb.class_model(rec.get("class_id", "cardsharp"))
 	_body_mesh = MeshInstance3D.new()
-	var cm := CapsuleMesh.new()
-	cm.radius = 0.35
-	cm.height = 1.7
-	_body_mesh.mesh = cm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = cls.color
-	mat.emission_enabled = true
-	mat.emission = cls.color * 0.3
-	_body_mesh.material_override = mat
-	_body_mesh.position.y = 0.85
-	add_child(_body_mesh)
+	if mdl != null:
+		add_child(mdl)
+		_body_model = mdl
+		_body_mesh.visible = false
+		add_child(_body_mesh)
+	else:
+		var cm := CapsuleMesh.new()
+		cm.radius = 0.35
+		cm.height = 1.7
+		_body_mesh.mesh = cm
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = cls.color
+		mat.emission_enabled = true
+		mat.emission = cls.color * 0.3
+		_body_mesh.material_override = mat
+		_body_mesh.position.y = 0.85
+		add_child(_body_mesh)
 
 	_label = Label3D.new()
 	_label.text = rec.get("name", "?")
@@ -77,6 +86,8 @@ func _ready() -> void:
 		_head.add_child(_cam)
 		_cam.make_current()
 		_body_mesh.visible = false
+		if _body_model != null:
+			_body_model.visible = false  # first-person: hide own model
 		_label.visible = false
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -187,6 +198,10 @@ func _local_move(delta: float) -> void:
 		if b.k == "invis" and int(b.until) > now:
 			invis_now = true
 	_body_mesh.transparency = 0.85 if invis_now else 0.0
+	if _body_model != null and not is_local():
+		for c in _body_model.get_children():
+			if c is GeometryInstance3D:
+				c.transparency = 0.85 if invis_now else 0.0
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 	move_and_slide()
@@ -371,6 +386,9 @@ func aim_prompt() -> String:
 	if a.kind == "enemy":
 		var node = a.get("node")
 		var ename: String = node.display_name if node != null else "?"
+		# Seer's Eye: insight reveals defenses at a glance.
+		if Game.my_rec().get("passives", {}).has("insight") and node != null:
+			ename += "  (AC %d, ~%d HP)" % [node.known_ac, node.est_hp]
 		match String(node.disp if node != null else "hostile"):
 			"passive":
 				return "E — Hunt %s" % ename

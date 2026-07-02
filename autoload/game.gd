@@ -475,6 +475,10 @@ func request_start_run() -> void:
 		threat = float(pending_load.get("threat", 1.0))
 		loot_rule = String(pending_load.get("loot_rule", loot_rule))
 		town_chests = pending_load.get("town_chests", {})
+		var saved_quests: Dictionary = pending_load.get("quests", {})
+		for pid in players:
+			if saved_quests.has(players[pid].name):
+				quests[pid] = saved_quests[players[pid].name]
 		var saved: Dictionary = pending_load.get("players", {})
 		for pid in players:
 			# A traveling character beats the world-save copy of that player.
@@ -1353,6 +1357,7 @@ const MELEE_CD_MS := 900
 const ENEMY_ATK_RANGE := 1.9
 
 var _melee_cd := {}      # pid -> until_msec (server)
+var _reroll_cd := {}     # pid -> until_msec (Weighted Fate passive)
 
 func _crit_floor_for(rec: Dictionary) -> int:
 	var l := eff_luck(rec)
@@ -1458,8 +1463,19 @@ func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
 		return
 	var crit: bool = d20 >= _crit_floor_for(rec)
 	if not crit and d20 + bonus < int(e.ac):
-		rpc("cl_hit_fx", eid, 0, "MISS")
-		return
+		# Weighted Fate: one automatic reroll of a miss, every 8s.
+		var now2 := Time.get_ticks_msec()
+		if rec.passives.has("reroll") and now2 > int(_reroll_cd.get(pid, 0)):
+			_reroll_cd[pid] = now2 + 8000
+			d20 = randi_range(1, 20)
+			crit = d20 >= _crit_floor_for(rec)
+			if d20 == 1 or (not crit and d20 + bonus < int(e.ac)):
+				rpc("cl_hit_fx", eid, 0, "MISS")
+				return
+			send_to(pid, "cl_notify", ["Weighted Fate — the miss tumbles back into a hit!"])
+		else:
+			rpc("cl_hit_fx", eid, 0, "MISS")
+			return
 	var dd: Array = [1, 4, 0]  # fists
 	if not w.is_empty():
 		dd = w.def.dmg.duplicate()
@@ -2149,6 +2165,16 @@ func _server_tick_enemies() -> void:
 		if int(e.status.get("sleep", 0)) > 0:
 			posmap[eid] = e.pos
 			continue  # out cold — no wandering, no ambushes
+		# De-aggro: lose track of players who get far enough away.
+		if bool(e.get("aware", false)):
+			var still_near := false
+			for pid2 in players:
+				var pn2 = world.get_player(pid2)
+				if pn2 != null and pn2.global_position.distance_to(Vector3(e.pos)) < 14.0:
+					still_near = true
+					break
+			if not still_near:
+				e.aware = false
 		if not e.in_combat:
 			node.smoked = is_smoked(e.pos)
 			node.tick_ai(players, world)
@@ -2194,9 +2220,10 @@ func _server_tick_hazards() -> void:
 				rec.breath = float(rec.get("breath", BREATH_MAX)) - 0.2
 				if float(rec.breath) <= 0.0:
 					rec.breath = 0.0
-					_drown_accum += 0.2
-					if _drown_accum >= 1.0:
-						_drown_accum = 0.0
+					# Per-player drown cadence (was a shared accumulator).
+					rec["_drown"] = float(rec.get("_drown", 0.0)) + 0.2
+					if float(rec["_drown"]) >= 1.0:
+						rec["_drown"] = 0.0
 						hurt_player(pid, 3, "drowning")
 		else:
 			rec.breath = minf(float(rec.get("breath", BREATH_MAX)) + 1.0, BREATH_MAX)
@@ -2471,7 +2498,16 @@ func save_now() -> void:
 		"town_log": town_log, "players": by_name,
 		"threat": threat, "loot_rule": loot_rule,
 		"town_chests": chest_store if floor_num == 0 else town_chests,
+		"quests": _quests_by_name(),
 	})
+
+
+func _quests_by_name() -> Dictionary:
+	var out := {}
+	for pid in quests:
+		if players.has(pid):
+			out[players[pid].name] = quests[pid]
+	return out
 
 
 func reset_session() -> void:

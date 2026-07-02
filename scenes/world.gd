@@ -124,6 +124,7 @@ func spawn_hit_fx(eid: int, dmg: int, txt: String) -> void:
 	var n := enemies_node.get_node_or_null(str(eid))
 	if n == null:
 		return
+	n.est_hp = maxi(n.est_hp - dmg, 0)  # keeps Seer's Eye estimates honest
 	var label := Label3D.new()
 	label.text = txt if dmg <= 0 else ("%d %s" % [dmg, txt]).strip_edges()
 	label.font_size = 64 if txt == "CRIT!" else 44

@@ -21,12 +21,18 @@ var _mesh: MeshInstance3D
 var _mesh_base_y := 0.8
 
 
+var known_ac := 10
+var est_hp := 10
+
+
 func setup(e: Dictionary) -> void:
 	eid = int(e.id)
 	type = String(e.type)
 	display_name = String(e.get("name", type))
 	elite = String(e.get("elite", ""))
 	disp = String(e.get("disp", "hostile"))
+	known_ac = int(e.get("ac", 10))
+	est_hp = int(e.get("hp", 10))
 
 
 func _ready() -> void:
@@ -41,6 +47,26 @@ func _ready() -> void:
 	col.shape = cap
 	col.position.y = 0.8 * size
 	add_child(col)
+
+	# Blockbench model first; procedural shapes as fallback while art lands.
+	var alpha := 1.0
+	if def.get("ghost", false):
+		alpha = 0.35
+	elif def.get("stealth", false):
+		alpha = 0.15
+	var mdl := ModelDb.mob(type, alpha)
+	if mdl != null:
+		var msc := float(def.get("size", 1.0))
+		mdl.scale = Vector3(msc, msc, msc)
+		if elite != "":
+			mdl.scale *= 1.15
+		add_child(mdl)
+		_mesh = MeshInstance3D.new()  # bob target stub (invisible)
+		_mesh.visible = false
+		add_child(_mesh)
+		_attach_label(def)
+		net_target = global_position
+		return
 
 	_mesh = MeshInstance3D.new()
 	var color: Color = def.color
@@ -103,6 +129,11 @@ func _ready() -> void:
 		eye.position = Vector3(side * size, _mesh_base_y * 1.5, -0.3 * size)
 		add_child(eye)
 
+	_attach_label(def)
+	net_target = global_position
+
+
+func _attach_label(def: Dictionary) -> void:
 	var label := Label3D.new()
 	var tag := ""
 	if bool(def.boss):
@@ -110,7 +141,7 @@ func _ready() -> void:
 	elif elite != "":
 		tag = "★ "
 	label.text = tag + display_name
-	label.position.y = 1.9 * size + 0.3
+	label.position.y = 1.9 * float(def.get("size", 1.0)) + 0.3
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.font_size = 40
 	label.pixel_size = 0.005
@@ -120,9 +151,8 @@ func _ready() -> void:
 		"neutral":
 			label.modulate = Color(0.95, 0.9, 0.55)
 		_:
-			label.modulate = color.lightened(0.4)
+			label.modulate = Color(def.color).lightened(0.4)
 	add_child(label)
-	net_target = global_position
 
 
 func _physics_process(delta: float) -> void:
