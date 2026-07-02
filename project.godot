@@ -18,6 +18,7 @@ SteamMgr="*res://autoload/steam_mgr.gd"
 Net="*res://autoload/net.gd"
 Game="*res://autoload/game.gd"
 SaveMgr="*res://autoload/save_mgr.gd"
+AudioMgr="*res://autoload/audio_mgr.gd"
 
 [display]
 

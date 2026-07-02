@@ -62,6 +62,7 @@ static func button(text: String, size := 18) -> Button:
 	var sbp := sb.duplicate()
 	sbp.bg_color = Color(0.3, 0.22, 0.4)
 	b.add_theme_stylebox_override("pressed", sbp)
+	b.pressed.connect(func(): AudioMgr.sfx("sfx_click", -12.0))
 	return b
 
 

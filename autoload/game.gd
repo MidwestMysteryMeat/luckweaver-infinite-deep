@@ -870,6 +870,21 @@ func cl_apply_edit(op: Dictionary) -> void:
 		edit_log.append(op)
 	if voxel != null:
 		voxel.apply_op(op)
+	# World SFX keyed off the op itself — identical on every peer.
+	if in_run and op.has("p"):
+		var at := Vector3(int(op.p[0]) + 0.5, int(op.p[1]) + 0.5, int(op.p[2]) + 0.5)
+		match String(op.t):
+			"set":
+				match int(op.b):
+					Blocks.AIR:
+						AudioMgr.sfx3d("sfx_break", at, -6.0)
+					Blocks.DOOR_OPEN, Blocks.DOOR:
+						AudioMgr.sfx3d("sfx_door", at, -4.0)
+					Blocks.CHEST_EMPTY:
+						AudioMgr.sfx3d("sfx_chest", at, -2.0)
+			"sphere":
+				if int(op.b) == Blocks.AIR and float(op.r) >= 1.5:
+					AudioMgr.sfx3d("sfx_explosion", at, 2.0)
 
 
 # ================================================================ inventory & items
@@ -2440,6 +2455,7 @@ func cl_spawn_pickup(k: Dictionary) -> void:
 func cl_take_pickup(kid: int) -> void:
 	if world != null:
 		world.take_pickup(kid)
+	AudioMgr.sfx("sfx_pickup", -8.0)
 
 
 # ================================================================ sync / chat / notify
