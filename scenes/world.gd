@@ -119,6 +119,27 @@ func take_pickup(kid: int) -> void:
 		n.queue_free()
 
 
+## Floating damage number over a mob — the heartbeat of real-time combat.
+func spawn_hit_fx(eid: int, dmg: int, txt: String) -> void:
+	var n := enemies_node.get_node_or_null(str(eid))
+	if n == null:
+		return
+	var label := Label3D.new()
+	label.text = txt if dmg <= 0 else ("%d %s" % [dmg, txt]).strip_edges()
+	label.font_size = 64 if txt == "CRIT!" else 44
+	label.pixel_size = 0.006
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = Color(1, 0.85, 0.2) if txt == "CRIT!" else \
+		(Color(0.7, 0.7, 0.8) if dmg <= 0 else Color(1, 0.35, 0.25))
+	label.position = Vector3(randf_range(-0.3, 0.3), 2.2, 0)
+	n.add_child(label)
+	var tw := label.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(label, "position:y", 3.4, 0.8)
+	tw.tween_property(label, "modulate:a", 0.0, 0.8)
+	tw.chain().tween_callback(label.queue_free)
+
+
 func clear_entities() -> void:
 	for n in enemies_node.get_children():
 		n.free()

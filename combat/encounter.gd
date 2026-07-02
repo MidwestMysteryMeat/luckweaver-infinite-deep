@@ -164,13 +164,15 @@ const NPC_LINES := [
 
 
 func start() -> void:
+	# Real-time era: this class only hosts NPC parley menus. Hostile combat
+	# resolves live in Game (_strike / _enemy_strike).
 	if String(e().get("disp", "hostile")) == "neutral":
 		npc = true
 		phase = "npc"
 		_say("%s eyes you warily. \"Easy now, Luckweaver.\"" % e().name)
 		_push()
 		return
-	_begin_combat()
+	_finish()
 
 
 func _begin_combat() -> void:
@@ -328,7 +330,9 @@ func _handle_npc(action: String) -> void:
 				return
 			_say("You roll %d vs %d — caught red-handed! %s draws steel!" % [pt, et, e().name])
 			e().disp = "hostile"
-			_begin_combat()
+			e()["aware"] = true
+			e().in_combat = false
+			_finish()  # real-time: they'll come swinging
 			return
 		"leave":
 			_say("\"Safe roads, Luckweaver.\"")

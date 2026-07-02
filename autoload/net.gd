@@ -4,7 +4,7 @@ extends Node
 ## Gameplay code never cares which is active; it talks to Game's RPCs.
 
 const PORT := 24545
-const MAX_PLAYERS := 4
+const MAX_PLAYERS := 12
 
 enum Mode { NONE, OFFLINE, ENET, STEAM }
 

@@ -110,6 +110,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		_do_place_or_use()
 	if event.is_action_pressed("interact"):
 		_do_interact()
+	# Real-time combat: LMB on a hostile = swing (mining stays hold-on-blocks).
+	if event.is_action_pressed("mine"):
+		var a := aim()
+		if a.kind == "enemy":
+			var node = a.get("node")
+			if node != null and node.disp == "hostile":
+				Game.request_melee(int(a.eid))
 
 
 func _physics_process(delta: float) -> void:
@@ -370,7 +377,7 @@ func aim_prompt() -> String:
 			"neutral":
 				return "E — Talk to %s" % ename
 			_:
-				return "E — Fight %s" % ename
+				return "LMB — Attack %s" % ename
 	if a.kind == "block":
 		var bid: int = Game.voxel.get_block_v(a.block)
 		if bid == Blocks.DOOR and _holding("golden_key"):

@@ -170,6 +170,38 @@ static func cast(g, pid: int, meta: Dictionary, target: Vector3) -> void:
 			g._sync_player(best_pid)
 			g.rpc("cl_notify", "%s calls %s back from the dark — whole, and repaid." %
 				[g.players[pid].name, fallen.name])
+	# Real-time combat tricks: casting at (or near) a foe applies the spell's
+	# battle effect directly — smite burns, chill freezes, hex saps.
+	var combat := String(meta.get("combat", ""))
+	if combat != "":
+		for eid in g.enemies:
+			var ce: Dictionary = g.enemies[eid]
+			if not ce.alive or Vector3(ce.pos).distance_to(target) > 3.0:
+				continue
+			match combat:
+				"smite":
+					var sdmg := 0
+					for i in range(power + 1):
+						sdmg += randi_range(1, 6)
+					ce.hp = int(ce.hp) - sdmg
+					g._enemy_status(ce, "burn", 2)
+					g.rpc("cl_hit_fx", eid, sdmg, "")
+					if int(ce.hp) <= 0:
+						g.enemy_defeated(eid, pid)
+				"chill":
+					g._enemy_status(ce, "sleep", 2)
+					g.rpc("cl_notify", "%s is frozen in place!" % ce.name)
+				"hex":
+					ce.atk = maxi(int(ce.atk) - 2, 0)
+					g.rpc("cl_notify", "%s is hexed — its blows weaken." % ce.name)
+			break
+		if combat == "mend":
+			var mrec: Dictionary = g.players[pid]
+			mrec.hp = mini(int(mrec.hp) + 8 * (power + 1), int(mrec.max_hp))
+		elif combat == "fortune":
+			g.players[pid].buffs.append({"k": "luck", "amt": 20,
+				"until": Time.get_ticks_msec() + 30000})
+		g._sync_player(pid)
 	# Cursed spells bite back sometimes.
 	if bool(meta.get("cursed", false)) and randf() < 0.25:
 		g.hurt_player(pid, 8, "a Fiend's Pact")

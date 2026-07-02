@@ -582,7 +582,7 @@ func _server_populate_floor() -> void:
 		rng.seed = DungeonGenerator.floor_seed(run_seed, floor_num) ^ 0xBEEF
 		var spawns: Array = gen_info.enemy_spawns.duplicate()
 		var count: int = clampi(int((3 + floor_num) * threat) + int(party().n) - 1,
-			3, mini(16, spawns.size()))
+			3, mini(24, spawns.size()))
 		for j in range(count):
 			if spawns.is_empty():
 				break
@@ -1341,6 +1341,241 @@ func sv_interact(kind: String, p: Array) -> void:
 				send_to(pid, "cl_notify", ["You need a Golden Key to lock doors."])
 
 
+# ================================================================ real-time combat
+# Combat is REAL-TIME: swings, arrows, and spells resolve instantly with the
+# same d20 math as ever (roll + attack bonus vs AC, nat-20 crits, nat-1
+# fumbles, luck advantage, resist/weak tags, statuses). Enemies chase and
+# swing back on their own cooldowns. Parley (encounter.gd) remains turn-menus
+# for neutral folk only.
+
+const MELEE_RANGE := 2.8
+const MELEE_CD_MS := 900
+const ENEMY_ATK_RANGE := 1.9
+
+var _melee_cd := {}      # pid -> until_msec (server)
+
+func _crit_floor_for(rec: Dictionary) -> int:
+	var l := eff_luck(rec)
+	if l >= 70:
+		return 18
+	if l >= 40:
+		return 19
+	return 20
+
+
+## Best melee weapon {def, meta} (quality/ench folded in by callers); {} = fists.
+func weapon_of(rec: Dictionary) -> Dictionary:
+	var best := {}
+	var best_avg := -1.0
+	for entry in rec.inv:
+		if entry == null:
+			continue
+		var def: Dictionary = Db.item_def(entry.id)
+		if def.kind != "weapon" or def.get("ranged", false):
+			continue
+		var meta: Dictionary = entry.get("meta", {})
+		var avg: float = def.dmg[0] * (def.dmg[1] + 1) * 0.5 + def.dmg[2] \
+			+ int(meta.get("quality", 0)) + int(meta.get("epow", 0)) * 2
+		if avg > best_avg:
+			best_avg = avg
+			best = {"def": def, "meta": meta}
+	return best
+
+
+func atk_bonus_of(rec: Dictionary, w: Dictionary) -> int:
+	var c: Dictionary = Db.CLASSES[rec.class_id]
+	var b: int = int(c.atk) + int(rec.level) / 2 + int(rec.get("atk_perm", 0)) \
+		+ Db.prof_eff(rec, "combat") / 8
+	if not w.is_empty():
+		b += int(w.def.get("atk", 0))
+	if rec.get("injuries", {}).has("arms"):
+		b -= 2
+	for buff in rec.buffs:
+		if buff.k == "atk":
+			b += int(buff.amt)
+	return b
+
+
+func player_ac(rec: Dictionary) -> int:
+	var armor := armor_of(rec)
+	var ac: int = 10 + int(Db.CLASSES[rec.class_id].def) + int(rec.get("ac_perm", 0)) \
+		+ int(armor.ac) + int(armor.ench.get("ember", 0))
+	if rec.get("injuries", {}).has("body"):
+		ac -= 1
+	for b in rec.buffs:
+		if b.k == "stone":
+			ac += 6
+		elif b.k == "ac":
+			ac += int(b.amt)
+	return ac
+
+
+func request_melee(eid: int) -> void:
+	if is_server():
+		sv_melee(eid)
+	else:
+		rpc_id(1, "sv_melee", eid)
+
+
+@rpc("any_peer", "reliable")
+func sv_melee(eid: int) -> void:
+	if not is_server():
+		return
+	var pid := _sender()
+	var rec: Dictionary = players.get(pid, {})
+	var e: Dictionary = enemies.get(eid, {})
+	if rec.is_empty() or e.is_empty() or not e.alive:
+		return
+	if String(e.get("disp", "hostile")) == "passive":
+		_server_hunt(pid, eid)
+		return
+	var now := Time.get_ticks_msec()
+	if now < int(_melee_cd.get(pid, 0)):
+		return
+	var node = world.get_player(pid)
+	if node == null or node.global_position.distance_to(Vector3(e.pos)) > MELEE_RANGE + 1.0:
+		return
+	_melee_cd[pid] = now + MELEE_CD_MS
+	var w := weapon_of(rec)
+	_strike(pid, eid, w, false)
+
+
+## One d20 strike (melee or arrow) from a player against a mob.
+func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
+	var rec: Dictionary = players[pid]
+	var e: Dictionary = enemies[eid]
+	var sneak: bool = not bool(e.get("aware", false)) \
+		and String(e.get("disp", "hostile")) == "hostile"
+	e.aware = true
+	e.disp = "hostile" if String(e.get("disp", "")) != "passive" else e.disp
+	var d20 := randi_range(1, 20)
+	if randf() * 100.0 < eff_luck(rec) * 0.4:  # luck advantage
+		d20 = maxi(d20, randi_range(1, 20))
+	var bonus := atk_bonus_of(rec, w)
+	if d20 == 1:
+		rpc("cl_hit_fx", eid, 0, "FUMBLE")
+		send_to(pid, "cl_notify", ["Natural 1 — your swing goes wide!"])
+		return
+	var crit: bool = d20 >= _crit_floor_for(rec)
+	if not crit and d20 + bonus < int(e.ac):
+		rpc("cl_hit_fx", eid, 0, "MISS")
+		return
+	var dd: Array = [1, 4, 0]  # fists
+	if not w.is_empty():
+		dd = w.def.dmg.duplicate()
+		dd[2] = int(dd[2]) + int(w.meta.get("quality", 0))
+	var dmg := int(dd[2])
+	for i in range(int(dd[0]) * (2 if crit else 1)):
+		dmg += randi_range(1, int(dd[1]))
+	if crit:
+		dmg = int(dmg * (1.0 + float(rec.passives.get("soul_strike", 0.0))))
+	if sneak:
+		dmg *= 2
+		send_to(pid, "cl_notify", ["SNEAK ATTACK — it never saw you."])
+	# Enchants.
+	if not w.is_empty():
+		match String(w.meta.get("ench", "")):
+			"ember":
+				dmg += randi_range(1, 4) * int(w.meta.get("epow", 1))
+				_enemy_status(e, "burn", 2)
+			"void":
+				rec.hp = mini(int(rec.hp) + 2 * int(w.meta.get("epow", 1)), int(rec.max_hp))
+			"frost":
+				if randf() < 0.12 * int(w.meta.get("epow", 1)):
+					_enemy_status(e, "sleep", 1)
+			"verdant":
+				rec.hp = mini(int(rec.hp) + int(w.meta.get("epow", 1)), int(rec.max_hp))
+	# Resist / weak by damage tag.
+	var tag: String = w.def.get("dtag", "physical") if not w.is_empty() else "physical"
+	var def2: Dictionary = Db.ENEMIES[e.type]
+	if tag in def2.get("resist", []):
+		dmg = maxi(1, dmg / 2)
+	elif tag in def2.get("weak", []):
+		dmg = int(dmg * 1.5)
+	e.hp = int(e.hp) - dmg
+	rpc("cl_hit_fx", eid, dmg, "CRIT!" if crit else "")
+	award_prof(pid, "combat", 1)
+	_sync_player(pid)
+	# Boss phases: rage steps at 2/3 and 1/3 HP.
+	if bool(e.get("boss", false)):
+		var frac := float(e.hp) / float(e.max)
+		var want := 3 if frac <= 0.33 else (2 if frac <= 0.66 else 1)
+		if want > int(e.get("phase", 1)):
+			e.phase = want
+			e.atk = int(e.atk) + 1
+			rpc("cl_notify", "— PHASE %d — %s roars, and the vault trembles!" % [want, e.name])
+	if int(e.hp) <= 0:
+		# Goldtouched pays out on the kill.
+		if not w.is_empty() and String(w.meta.get("ench", "")) == "gilded":
+			reward_gold(pid, 10 * int(w.meta.get("epow", 1)))
+		var mend := int(armor_of(rec).ench.get("verdant", 0))
+		if mend > 0:
+			rec.hp = mini(int(rec.hp) + mend * 3, int(rec.max_hp))
+		reward_gold(pid, randi_range(2, 12) + floor_num * 4)
+		enemy_defeated(eid, pid)
+
+
+func _enemy_status(e: Dictionary, kind: String, turns: int) -> void:
+	var def: Dictionary = Db.ENEMIES[e.type]
+	if (kind == "burn" and "fire" in def.get("resist", [])) \
+			or (kind == "poison" and "poison" in def.get("resist", [])):
+		return
+	if not e.has("status"):
+		e["status"] = {}
+	e.status[kind] = maxi(int(e.status.get(kind, 0)), turns)
+
+
+@rpc("authority", "call_local", "reliable")
+func cl_hit_fx(eid: int, dmg: int, txt: String) -> void:
+	if world != null:
+		world.spawn_hit_fx(eid, dmg, txt)
+
+
+## One enemy swing at a player: d20 + atk vs the player's AC, plus specials.
+func _enemy_strike(eid: int, pid: int) -> void:
+	var e: Dictionary = enemies[eid]
+	var rec: Dictionary = players[pid]
+	# Sleeping/frozen mobs don't swing (statuses tick down on the 1s tick).
+	if int(e.get("status", {}).get("sleep", 0)) > 0:
+		return
+	var swings := 1
+	var spec := String(e.special)
+	var use_spec: bool = spec != "" and randf() < float(e.spec_chance)
+	if use_spec and spec == "multiattack":
+		swings = 2
+	for s in range(swings):
+		var d20 := randi_range(1, 20)
+		var ac := player_ac(rec)
+		if d20 == 1 or (d20 < 20 and d20 + int(e.atk) < ac):
+			send_to(pid, "cl_notify", ["%s swings at you — deflected (AC %d)." % [e.name, ac]])
+			continue
+		var dd: Array = e.dmg
+		var dmg := int(dd[2])
+		for i in range(int(dd[0]) * (2 if d20 == 20 else 1)):
+			dmg += randi_range(1, int(dd[1]))
+		hurt_player(pid, dmg, e.name)
+		send_to(pid, "cl_notify", ["%s hits you for %d%s" % [e.name, dmg, " — CRITICAL!" if d20 == 20 else "."]])
+	if use_spec:
+		match spec:
+			"poison", "engulf", "acid_spit":
+				rec.buffs.append({"k": "poison", "amt": 2, "until": Time.get_ticks_msec() + 6000})
+				send_to(pid, "cl_notify", ["Venom seeps in — you are POISONED."])
+			"gold_steal":
+				var take: int = mini(int(rec.gold), randi_range(8, 20 + floor_num * 4))
+				rec.gold = int(rec.gold) - take
+				e["stolen"] = int(e.get("stolen", 0)) + take
+				send_to(pid, "cl_notify", ["%s snatches %d gold!" % [e.name, take]])
+			"luck_drain":
+				rec.buffs.append({"k": "luck", "amt": -8, "until": Time.get_ticks_msec() + 30000})
+				send_to(pid, "cl_notify", ["%s siphons your fortune." % e.name])
+			"heal_self":
+				e.hp = mini(int(e.hp) + int(e.max) / 6, int(e.max))
+			"curse":
+				rec.buffs.append({"k": "atk", "amt": -2, "until": Time.get_ticks_msec() + 15000})
+				send_to(pid, "cl_notify", ["A black sigil saps your strength."])
+	_sync_player(pid)
+
+
 # ================================================================ encounters
 
 func request_encounter(eid: int) -> void:
@@ -1358,34 +1593,28 @@ func sv_encounter(eid: int) -> void:
 	_server_start_encounter(pid, eid)
 
 
-func _server_start_encounter(pid: int, eid: int, ranged := false) -> void:
+## Parley/hunt only in the real-time era: passive = hunt, neutral = talk menu.
+## Hostiles are fought live with LMB/bows/spells.
+func _server_start_encounter(pid: int, eid: int, _ranged := false) -> void:
 	var rec: Dictionary = players.get(pid, {})
 	var e: Dictionary = enemies.get(eid, {})
 	if rec.is_empty() or e.is_empty() or not e.alive or e.in_combat or rec.in_enc:
 		return
-	# Passive animals are hunted outright — no combat, just the harvest.
 	if String(e.get("disp", "hostile")) == "passive":
 		_server_hunt(pid, eid)
 		return
-	# Sneak attack: the foe is shrouded in smoke, or you struck from range
-	# before it ever noticed you.
-	var sneak := is_smoked(e.pos)
-	if ranged:
-		var pnode = world.get_player(pid)
-		if pnode != null and pnode.global_position.distance_to(Vector3(e.pos)) > 8.0:
-			sneak = true
+	if String(e.get("disp", "hostile")) == "hostile":
+		return  # swing at it — this is real-time now
 	e.in_combat = true
 	rec.in_enc = true
 	var enc := Encounter.new(self, pid, eid)
-	enc.sneak = sneak
-	enc.opened_ranged = ranged
 	encounters[pid] = enc
 	enc.start()
 	_sync_player(pid)
 
 
-## Aimed bow shot in the world: consumes an arrow, opens the fight (possibly
-## as a sneak attack) with the arrow as the first strike.
+## Aimed bow shot: consumes an arrow and resolves as a live ranged strike
+## (double damage if the target never saw you).
 func request_bow(eid: int) -> void:
 	if is_server():
 		sv_bow(eid)
@@ -1399,11 +1628,28 @@ func sv_bow(eid: int) -> void:
 		return
 	var pid := _sender()
 	var rec: Dictionary = players.get(pid, {})
-	if rec.is_empty() or not _consume_id(rec, "arrow", 1):
+	var e: Dictionary = enemies.get(eid, {})
+	if rec.is_empty() or e.is_empty() or not e.alive:
+		return
+	if not _consume_id(rec, "arrow", 1):
 		send_to(pid, "cl_notify", ["No arrows left."])
 		return
-	_sync_player(pid)
-	_server_start_encounter(pid, eid, true)
+	# Best bow (ranged weapon) for the shot.
+	var best := {}
+	var best_avg := -1.0
+	for entry in rec.inv:
+		if entry == null:
+			continue
+		var def: Dictionary = Db.item_def(entry.id)
+		if def.kind != "weapon" or not def.get("ranged", false):
+			continue
+		var avg: float = def.dmg[0] * (def.dmg[1] + 1) * 0.5 + def.dmg[2]
+		if avg > best_avg:
+			best_avg = avg
+			best = {"def": def, "meta": entry.get("meta", {})}
+	if best.is_empty():
+		return
+	_strike(pid, eid, best, true)
 
 
 ## Ochre Jelly split: a quarter-strength copy oozes off nearby (server).
@@ -1736,7 +1982,8 @@ func _server_spawn_enemy(type: String, pos: Vector3) -> void:
 	var pt := party()
 	var curve := 1.0 + 0.14 * floor_num
 	if disp == "hostile":
-		curve *= (1.0 + 0.3 * (float(pt.n) - 1.0)) * (1.0 + 0.04 * (float(pt.avg) - 1.0))
+		# Party scaling capped so 12-player lobbies get bigger packs, not sponges.
+		curve *= minf(1.0 + 0.3 * (float(pt.n) - 1.0), 2.5) * (1.0 + 0.04 * (float(pt.avg) - 1.0))
 	var hp := int(def.hp * curve * (threat if disp == "hostile" else 1.0))
 	var atk := int(def.atk) + floor_num / 3
 	if disp == "hostile":
@@ -1866,6 +2113,8 @@ func _server_tick_camps_and_regen() -> void:
 		for b in rec.buffs:
 			if b.k == "regen":
 				heal += int(b.amt)
+			elif b.k == "poison":
+				hurt_player(pid, int(b.amt), "poison")
 		for key in camps:
 			if p.global_position.distance_to(camps[key]) < 6.0:
 				heal += 1
@@ -1905,13 +2154,17 @@ func _server_tick_enemies() -> void:
 			node.tick_ai(players, world)
 		e.pos = node.global_position
 		posmap[eid] = e.pos
-		# Contact starts combat — hostiles only; folk and critters just mingle.
-		if String(e.get("disp", "hostile")) == "hostile" and not e.in_combat and e.cooldown <= 0.0:
+		# Real-time attacks: hostiles swing at whoever is in reach, on their
+		# own cooldown (e.cooldown doubles as attack timer).
+		if String(e.get("disp", "hostile")) == "hostile" and e.cooldown <= 0.0:
 			for pid in players:
 				var p = world.get_player(pid)
-				if p != null and not players[pid].in_enc and p.global_position.distance_to(e.pos) < 1.7:
-					_server_start_encounter(pid, eid)
-					break
+				if p == null or p.global_position.distance_to(Vector3(e.pos)) > ENEMY_ATK_RANGE:
+					continue
+				e.cooldown = 1.6
+				e.aware = true
+				_enemy_strike(eid, pid)
+				break
 	if not posmap.is_empty():
 		rpc("cl_enemy_positions", posmap)
 

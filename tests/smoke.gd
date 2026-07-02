@@ -365,43 +365,67 @@ func _run_test(main) -> void:
 	else:
 		print("  (no passive spawn this seed — skipping hunt check)")
 
-	print("[smoke] turn-based combat: d20s, AC, crits")
+	print("[smoke] REAL-TIME combat: d20 strikes, enemy swings, bow, parley")
 	var foe := -1
 	for eid in Game.enemies:
 		var e: Dictionary = Game.enemies[eid]
 		if String(e.get("disp", "hostile")) == "hostile" and e.alive:
 			foe = eid
 			break
-	Events.enc_state.connect(_on_enc_state)
 	var threat_before: float = Game.threat
-	Game._server_start_encounter(1, foe)
-	_check(Game.encounters.has(1) or not Game.enemies[foe].alive, "encounter open")
-	_check(String(_st.get("phase", "")) in ["player", "done"], "player turn pushed to client")
-	_check(not _st.get("actions", []).is_empty() or String(_st.phase) == "done", "actions offered")
+	# Drag the foe into melee range.
+	var fnode = Game.world.get_enemy(foe)
+	fnode.global_position = p.global_position + Vector3(1.5, 0.5, 0)
+	Game.enemies[foe].pos = fnode.global_position
+	var ehp_start: int = int(Game.enemies[foe].hp)
+	for i in range(80):
+		if not Game.enemies[foe].alive:
+			break
+		Game._melee_cd.erase(1)  # skip the swing cooldown for the test
+		Game.request_melee(foe)
+	_check(int(Game.enemies[foe].hp) < ehp_start or not Game.enemies[foe].alive,
+		"live d20 strikes draw blood")
+	_check(not Game.enemies[foe].alive, "foe cut down in real time")
+	_check(int(Game.my_rec().prof.combat.xp) > 0, "combat skill gained use-XP")
+	# Enemy swings back: spawn one adjacent and let the AI tick attack.
+	Game._server_spawn_enemy("gloom_rat", p.global_position + Vector3(1.2, 0.5, 0))
+	var rat := -1
+	for eid in Game.enemies:
+		if Game.enemies[eid].type == "gloom_rat" and Game.enemies[eid].alive:
+			rat = eid
+	var hp_pre2: int = int(Game.my_rec().hp)
+	var swung := false
+	for i in range(40):
+		Game.enemies[rat].cooldown = 0.0
+		Game.enemies[rat].pos = p.global_position + Vector3(1.2, 0.5, 0)
+		Game._server_tick_enemies()
+		if int(Game.my_rec().hp) < hp_pre2:
+			swung = true
+			break
+	_check(swung, "enemies swing back in real time")
+	Game.my_rec().hp = Game.my_rec().max_hp
+	# Bow: direct ranged strike.
 	Game.give_item(1, "bow_short", 1, {})
 	Game.give_item(1, "arrow", 5, {})
-	if Game.encounters.has(1):
-		var arrows_pre := _count_item("arrow")
-		Game.request_enc_action("shoot")
-		_check(_count_item("arrow") == arrows_pre - 1, "bow shot spent an arrow")
-	var ehp_start: int = int(Game.enemies[foe].hp)
-	for i in range(60):
-		if not Game.encounters.has(1):
-			break
-		Game.request_enc_action("attack")
-	var fought: bool = int(Game.enemies[foe].hp) < ehp_start or not Game.enemies[foe].alive \
-		or int(Game.my_rec().hp) < int(Game.my_rec().max_hp)
-	_check(fought, "dice drew blood on one side or the other")
-	var saw_roll := false
-	for r in _st.get("rolls", []):
-		if int(r.get("dice", [0])[0]) >= 1:
-			saw_roll = true
-	_check(saw_roll, "d20 results streamed to the UI")
+	var arrows_pre := _count_item("arrow")
+	Game.request_bow(rat)
+	_check(_count_item("arrow") == arrows_pre - 1, "bow shot spent an arrow (live)")
 	_check(Game.threat >= 0.7 and Game.threat <= 1.4,
 		"adaptive threat in bounds (%.2f, was %.2f)" % [Game.threat, threat_before])
-	if Game.encounters.has(1):
-		Game.request_enc_action("flee")
-	Events.enc_state.disconnect(_on_enc_state)
+	# Parley still turn-menu for neutral folk.
+	var folk := -1
+	for eid in Game.enemies:
+		if String(Game.enemies[eid].get("disp", "")) == "neutral" and Game.enemies[eid].alive:
+			folk = eid
+	if folk >= 0:
+		Events.enc_state.connect(_on_enc_state)
+		Game._server_start_encounter(1, folk)
+		_check(String(_st.get("phase", "")) == "npc", "neutral parley menu opens")
+		Game.request_enc_action("talk")
+		Game.request_enc_action("leave")
+		Events.enc_state.disconnect(_on_enc_state)
+	else:
+		print("  (no neutral mob this floor — parley check skipped)")
 
 	print("[smoke] fishing: cast, catch, fillet")
 	Game.give_item(1, "pole_wood", 1, {})
