@@ -22,6 +22,10 @@ func _init(main_ref) -> void:
 	resume.pressed.connect(func(): main.close_top_ui())
 	root.add_child(resume)
 
+	var settings := UITheme.button("Settings")
+	settings.pressed.connect(func(): main._open_ui(SettingsUI.new(main)))
+	root.add_child(settings)
+
 	if Game.is_server():
 		var save := UITheme.button("Save Game (F5)")
 		save.pressed.connect(func(): Game.save_now())

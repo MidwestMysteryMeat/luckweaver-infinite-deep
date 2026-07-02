@@ -129,6 +129,12 @@ func spawn_hit_fx(eid: int, dmg: int, txt: String) -> void:
 	n.est_hp = maxi(n.est_hp - dmg, 0)  # keeps Seer's Eye estimates honest
 	AudioMgr.sfx3d("sfx_crit" if txt == "CRIT!" else ("sfx_swing" if dmg <= 0 else "sfx_hit"),
 		n.global_position, -10.0 if dmg <= 0 else -2.0)
+	# Hit punch: the mob recoils; telegraphs blow up big and red instead.
+	if dmg > 0:
+		var base_scale: Vector3 = n.scale
+		var tw2 := n.create_tween()
+		tw2.tween_property(n, "scale", base_scale * 1.18, 0.06)
+		tw2.tween_property(n, "scale", base_scale, 0.12)
 	var label := Label3D.new()
 	label.text = txt if dmg <= 0 else ("%d %s" % [dmg, txt]).strip_edges()
 	label.font_size = 64 if txt == "CRIT!" else 44

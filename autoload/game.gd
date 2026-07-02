@@ -593,7 +593,8 @@ func _server_populate_floor() -> void:
 			var s: Vector3 = spawns.pop_at(rng.randi_range(0, spawns.size() - 1))
 			_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat), s)
 		if gen_info.has_boss and gen_info.boss_spawn != null:
-			_server_spawn_enemy("pit_boss", gen_info.boss_spawn)
+			_server_spawn_enemy(Db.boss_for(String(gen_info.get("biome", "delve")), floor_num),
+				gen_info.boss_spawn)
 		# Ambient life: animals to hunt, the occasional lost explorer.
 		var ambient := rng.randi_range(2, 4)
 		for j in range(ambient):
@@ -1632,6 +1633,18 @@ func _server_start_encounter(pid: int, eid: int, _ranged := false) -> void:
 	if rec.is_empty() or e.is_empty() or not e.alive or e.in_combat or rec.in_enc:
 		return
 	if String(e.get("disp", "hostile")) == "passive":
+		# Offer wheat to tame it into a loyal follower; otherwise it's dinner.
+		if bool(e.get("tamed", false)):
+			send_to(pid, "cl_notify", ["%s nuzzles you happily." % e.name])
+			return
+		if _consume_id(rec, "wheat", 1):
+			e.tamed = true
+			e.owner_pid = pid
+			e.name = "%s's %s" % [rec.name, e.name]
+			rpc("cl_tame", eid, e.name, pid)
+			send_to(pid, "cl_notify", ["It munches the wheat — %s now follows you!" % e.name])
+			_sync_player(pid)
+			return
 		_server_hunt(pid, eid)
 		return
 	if String(e.get("disp", "hostile")) == "hostile":
@@ -1788,11 +1801,15 @@ func enemy_defeated(eid: int, by_pid: int) -> void:
 			server_spawn_pickup(at + Vector3(rng.randf_range(-1.2, 1.2), 0.6,
 				rng.randf_range(-1.2, 1.2)), d, _next_loot_owner())
 	if bool(e.get("boss", false)):
-		rpc("cl_notify", "THE VAULT TYRANT FALLS. The way down opens...")
+		rpc("cl_notify", "%s FALLS. The way down opens..." % String(e.name).to_upper())
 		var pp: Array = gen_info.get("portal_pos", [int(e.pos.x), 3, int(e.pos.z)])
 		_apply_edit({"t": "set", "p": pp, "b": Blocks.PORTAL})
 		for pid in players:
 			give_item(pid, "gambit_cache", 1, {})
+		# Signature drops beam down at the corpse for whoever claims them.
+		for d in Db.BOSS_DROPS.get(String(e.type), []):
+			server_spawn_pickup(Vector3(e.pos) + Vector3(randf_range(-1, 1), 0.8,
+				randf_range(-1, 1)), {"id": d.id, "count": int(d.count), "meta": {}}, 0)
 	else:
 		rpc("cl_notify", "%s slays %s!" % [rec.get("name", "?"), e.get("name", "a foe")])
 
@@ -2053,6 +2070,16 @@ func cl_spawn_enemy(e: Dictionary) -> void:
 
 
 @rpc("authority", "call_local", "reliable")
+func cl_tame(eid: int, new_name: String, owner_pid: int) -> void:
+	var n = world.get_enemy(eid) if world != null else null
+	if n != null:
+		n.display_name = new_name
+		n.tamed = true
+		n.owner_pid = owner_pid
+	AudioMgr.sfx("sfx_magic", -8.0)
+
+
+@rpc("authority", "call_local", "reliable")
 func cl_despawn_enemy(eid: int) -> void:
 	if world != null:
 		world.despawn_enemy(eid)
@@ -2132,9 +2159,34 @@ func _server_tick_enemy_statuses() -> void:
 			enemy_defeated(eid, 1)
 
 
+var _ambush_t := 150.0
+
+## Timed floor events: every couple of minutes the dark sends an ambush.
+func _server_tick_ambush() -> void:
+	if floor_num <= 0 or players.is_empty():
+		return
+	_ambush_t -= 1.0
+	if _ambush_t > 0.0:
+		return
+	_ambush_t = randf_range(120.0, 200.0)
+	var pids: Array = players.keys()
+	var target: int = pids[randi() % pids.size()]
+	var p = world.get_player(target)
+	if p == null:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	rpc("cl_notify", "⚠ AMBUSH — the dark closes in on %s!" % players[target].name)
+	for i in range(2 + party().n / 2):
+		var a := randf() * TAU
+		_server_spawn_enemy(Db.pick_enemy_type(rng, floor_num, threat),
+			p.global_position + Vector3(cos(a) * 6.0, 1.0, sin(a) * 6.0))
+
+
 func _server_tick_camps_and_regen() -> void:
 	_server_tick_enemy_statuses()
 	_server_tick_fishing()
+	_server_tick_ambush()
 	for pid in players:
 		var rec: Dictionary = players[pid]
 		var p = world.get_player(pid)
@@ -2198,12 +2250,21 @@ func _server_tick_enemies() -> void:
 		# Real-time attacks: hostiles swing at whoever is in reach, on their
 		# own cooldown (e.cooldown doubles as attack timer).
 		if String(e.get("disp", "hostile")) == "hostile" and e.cooldown <= 0.0:
+			var reach := 7.5 if bool(Db.ENEMIES[e.type].get("ranged", false)) else ENEMY_ATK_RANGE
 			for pid in players:
 				var p = world.get_player(pid)
-				if p == null or p.global_position.distance_to(Vector3(e.pos)) > ENEMY_ATK_RANGE:
+				if p == null or p.global_position.distance_to(Vector3(e.pos)) > reach:
 					continue
-				e.cooldown = 1.6
 				e.aware = true
+				# Bosses TELEGRAPH: a marked wind-up, then the blow lands.
+				if bool(e.get("boss", false)) and not bool(e.get("windup", false)):
+					e.windup = true
+					e.cooldown = 0.8
+					rpc("cl_hit_fx", eid, 0, "⚠ WINDUP")
+					send_to(pid, "cl_notify", ["%s rears back — MOVE!" % e.name])
+					break
+				e.windup = false
+				e.cooldown = 1.6
 				_enemy_strike(eid, pid)
 				break
 	if not posmap.is_empty():
@@ -2559,7 +2620,7 @@ func _setup_input() -> void:
 		"mv_fwd": KEY_W, "mv_back": KEY_S, "mv_left": KEY_A, "mv_right": KEY_D,
 		"jump": KEY_SPACE, "sprint": KEY_SHIFT, "interact": KEY_E,
 		"inv": KEY_TAB, "chat": KEY_T, "pause": KEY_ESCAPE, "quicksave": KEY_F5,
-		"skills": KEY_K, "map": KEY_M, "guide": KEY_H,
+		"skills": KEY_K, "map": KEY_M, "guide": KEY_H, "dodge": KEY_CTRL,
 	}
 	for i in range(1, 10):
 		keys["hotbar_%d" % i] = KEY_0 + i

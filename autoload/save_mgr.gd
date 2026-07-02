@@ -5,6 +5,27 @@ extends Node
 const SAVE_DIR := "user://saves"
 const SLOT := "user://saves/slot1.json"
 const CHARACTER := "user://saves/character.json"
+const SETTINGS := "user://saves/settings.json"
+
+var settings := {"sens": 0.0025, "vol_music": 0.0, "vol_sfx": 0.0}
+
+
+func _ready() -> void:
+	if FileAccess.file_exists(SETTINGS):
+		var f := FileAccess.open(SETTINGS, FileAccess.READ)
+		var parsed: Variant = JSON.parse_string(f.get_as_text())
+		f.close()
+		if typeof(parsed) == TYPE_DICTIONARY:
+			for k in parsed:
+				settings[k] = parsed[k]
+
+
+func save_settings() -> void:
+	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+	var f := FileAccess.open(SETTINGS, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(settings))
+		f.close()
 
 var _char_dirty := {}
 var _char_accum := 0.0

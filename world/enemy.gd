@@ -23,6 +23,8 @@ var _mesh_base_y := 0.8
 
 var known_ac := 10
 var est_hp := 10
+var tamed := false
+var owner_pid := 0
 
 
 func setup(e: Dictionary) -> void:
@@ -172,7 +174,18 @@ func tick_ai(players: Dictionary, world) -> void:
 		_wander_dir = Vector3(cos(a), 0, sin(a)) * (0.0 if randf() < 0.3 else 1.0)
 	var dir := _wander_dir
 	var speed := 1.6
-	if disp == "hostile" and not smoked:
+	# Pets heel: trot after their owner when they fall behind.
+	if tamed:
+		var owner_node = world.get_player(owner_pid)
+		if owner_node != null:
+			var to_owner: Vector3 = owner_node.global_position - global_position
+			to_owner.y = 0
+			if to_owner.length() > 3.0:
+				dir = to_owner.normalized()
+				speed = 3.2
+			else:
+				dir = Vector3.ZERO
+	if not tamed and disp == "hostile" and not smoked:
 		var nearest = null
 		var nd := 10.0
 		for pid in players:

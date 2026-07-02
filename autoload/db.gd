@@ -315,9 +315,31 @@ const ENEMIES := {
 	"ochre_jelly": {"name": "Ochre Jelly", "hp": 45, "ac": 8, "atk": 3, "dmg": [1, 8, 0],
 		"xp": 45, "special": "split", "spec_chance": 1.0, "min_floor": 4, "boss": false,
 		"shape": "blob", "size": 1.0, "color": Color(0.8, 0.6, 0.2)},
+	"bone_archer": {"name": "Bone Archer", "hp": 30, "ac": 12, "atk": 4, "dmg": [1, 6, 1],
+		"xp": 34, "special": "", "spec_chance": 0.0, "min_floor": 3, "boss": false,
+		"ranged": true, "resist": ["poison"], "weak": ["physical"],
+		"drops": [{"id": "arrow", "count": 4}, {"id": "bone", "count": 1}],
+		"shape": "tall", "size": 1.0, "color": Color(0.8, 0.78, 0.68)},
+	# --- bosses (picked by the floor's biome; signature drops in BOSS_DROPS)
 	"pit_boss": {"name": "The Vault Tyrant", "hp": 300, "ac": 15, "atk": 6, "dmg": [2, 6, 2],
 		"xp": 250, "special": "multiattack", "spec_chance": 0.25, "min_floor": 1, "boss": true,
 		"shape": "capsule", "size": 1.8, "color": Color(0.9, 0.2, 0.25)},
+	"drowned_king": {"name": "The Drowned King", "hp": 340, "ac": 14, "atk": 6, "dmg": [2, 8, 1],
+		"xp": 300, "special": "engulf", "spec_chance": 0.3, "min_floor": 1, "boss": true,
+		"resist": ["frost"], "weak": ["fire"],
+		"shape": "capsule", "size": 1.8, "color": Color(0.35, 0.6, 0.65)},
+	"spore_tyrant": {"name": "The Spore Tyrant", "hp": 320, "ac": 13, "atk": 5, "dmg": [2, 6, 3],
+		"xp": 300, "special": "poison", "spec_chance": 0.4, "min_floor": 1, "boss": true,
+		"resist": ["poison"], "weak": ["fire"],
+		"shape": "blob", "size": 2.0, "color": Color(0.6, 0.4, 0.65)},
+	"crypt_lich": {"name": "The Crypt Lich", "hp": 300, "ac": 16, "atk": 6, "dmg": [2, 6, 2],
+		"xp": 320, "special": "curse", "spec_chance": 0.4, "min_floor": 1, "boss": true,
+		"resist": ["physical", "poison"], "weak": ["dark", "fire"],
+		"shape": "tall", "size": 1.8, "color": Color(0.55, 0.45, 0.75)},
+	"adamant_colossus": {"name": "The Adamant Colossus", "hp": 450, "ac": 17, "atk": 7, "dmg": [3, 6, 3],
+		"xp": 400, "special": "multiattack", "spec_chance": 0.3, "min_floor": 1, "boss": true,
+		"resist": ["physical", "fire"], "weak": ["frost"],
+		"shape": "box", "size": 2.0, "color": Color(0.35, 0.75, 0.6)},
 	# --- passive animals (E = hunt; instant drops, no combat)
 	"gloom_hog": {"name": "Gloom Hog", "hp": 10, "ac": 8, "atk": 0, "dmg": [1, 2, 0],
 		"xp": 6, "special": "", "spec_chance": 0.0, "min_floor": 1, "boss": false,
@@ -350,6 +372,30 @@ const ELITES := {
 	"cursed": {"name": "Cursed", "hp": 1.2, "atk": 2, "ac": 0, "gold": 1.5, "color": Color(0.85, 0.2, 0.35)},
 	"ancient": {"name": "Ancient", "hp": 1.8, "atk": 1, "ac": 2, "gold": 2.0, "color": Color(0.6, 0.85, 0.7)},
 }
+
+## Signature loot per boss, on top of the usual caches.
+const BOSS_DROPS := {
+	"pit_boss": [{"id": "gambit_cache", "count": 2}],
+	"drowned_king": [{"id": "pole_mythril", "count": 1}, {"id": "kelp", "count": 5}],
+	"spore_tyrant": [{"id": "sootcap", "count": 6}, {"id": "gambit_cache", "count": 1}],
+	"crypt_lich": [{"id": "rune_soul", "count": 2}, {"id": "ess_void", "count": 3}],
+	"adamant_colossus": [{"id": "adamant_ingot", "count": 6}],
+}
+
+## Boss for a floor, matched to its biome (deep floors summon the Colossus).
+static func boss_for(biome: String, fnum: int) -> String:
+	if fnum >= 20:
+		return "adamant_colossus"
+	match biome:
+		"lakes":
+			return "drowned_king"
+		"fungal":
+			return "spore_tyrant"
+		"crypt", "frozen":
+			return "crypt_lich"
+		_:
+			return "pit_boss"
+
 
 const MUTATIONS := {
 	"golden_touch": {"name": "Golden Touch", "desc": "Mined stone sometimes pays gold."},

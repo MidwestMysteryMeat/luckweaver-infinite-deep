@@ -31,6 +31,7 @@ func _ready() -> void:
 		p.volume_db = -6.0
 		add_child(p)
 		_pool.append(p)
+	apply_settings()
 	Events.floor_loaded.connect(_on_floor)
 	Events.notify.connect(_on_notify)
 	Events.my_record_changed.connect(_on_record)
@@ -39,6 +40,15 @@ func _ready() -> void:
 		_amb.stop()
 		_music_key = ""
 		_amb_key = "")
+
+
+var _sfx_offset := 0.0
+
+
+func apply_settings() -> void:
+	_music.volume_db = -10.0 + float(SaveMgr.settings.vol_music)
+	_amb.volume_db = -14.0 + float(SaveMgr.settings.vol_music)
+	_sfx_offset = float(SaveMgr.settings.vol_sfx)
 
 
 func _load(key: String) -> AudioStream:
@@ -55,7 +65,7 @@ func sfx(key: String, vol := -6.0) -> void:
 	var p: AudioStreamPlayer = _pool[_pi]
 	_pi = (_pi + 1) % _pool.size()
 	p.stream = s
-	p.volume_db = vol
+	p.volume_db = vol + _sfx_offset
 	p.play()
 
 
@@ -67,7 +77,7 @@ func sfx3d(key: String, pos: Vector3, vol := 0.0) -> void:
 		return
 	var p := AudioStreamPlayer3D.new()
 	p.stream = s
-	p.volume_db = vol
+	p.volume_db = vol + _sfx_offset
 	p.max_distance = 30.0
 	Game.world.add_child(p)
 	p.global_position = pos

@@ -21,6 +21,8 @@ var _cam: Camera3D
 var _label: Label3D
 var _body_mesh: MeshInstance3D
 var _body_model: Node3D = null
+var _hand: Node3D = null
+var _dodge_cd := 0
 var _net_accum := 0.0
 var _net_pos := Vector3.ZERO
 var _net_yaw := 0.0
@@ -85,6 +87,22 @@ func _ready() -> void:
 		_cam.fov = 80
 		_head.add_child(_cam)
 		_cam.make_current()
+		# First-person weapon: a simple blade that arcs on every swing.
+		_hand = Node3D.new()
+		_hand.position = Vector3(0.45, -0.35, -0.6)
+		_cam.add_child(_hand)
+		var blade := MeshInstance3D.new()
+		var bm2 := BoxMesh.new()
+		bm2.size = Vector3(0.06, 0.5, 0.06)
+		blade.mesh = bm2
+		blade.position = Vector3(0, 0.25, 0)
+		blade.rotation_degrees = Vector3(-25, 0, 0)
+		var bmat2 := StandardMaterial3D.new()
+		bmat2.albedo_color = Color(0.75, 0.75, 0.82)
+		bmat2.emission_enabled = true
+		bmat2.emission = Color(0.3, 0.3, 0.35)
+		blade.material_override = bmat2
+		_hand.add_child(blade)
 		_body_mesh.visible = false
 		if _body_model != null:
 			_body_model.visible = false  # first-person: hide own model
@@ -106,8 +124,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not is_local() or locked:
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotation.y -= event.relative.x * MOUSE_SENS
-		_head.rotation.x = clampf(_head.rotation.x - event.relative.y * MOUSE_SENS,
+		var sens := float(SaveMgr.settings.sens)
+		rotation.y -= event.relative.x * sens
+		_head.rotation.x = clampf(_head.rotation.x - event.relative.y * sens,
 			-PI / 2 + 0.05, PI / 2 - 0.05)
 	for i in range(1, 10):
 		if event.is_action_pressed("hotbar_%d" % i):
@@ -128,6 +147,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			var node = a.get("node")
 			if node != null and node.disp == "hostile":
 				Game.request_melee(int(a.eid))
+		_swing_anim()
+	# Dodge: a quick burst-step in your movement direction (Ctrl).
+	if event.is_action_pressed("dodge") and Time.get_ticks_msec() > _dodge_cd:
+		_dodge_cd = Time.get_ticks_msec() + 1200
+		var input2 := Input.get_vector("mv_left", "mv_right", "mv_fwd", "mv_back")
+		var dir2 := (transform.basis * Vector3(input2.x, 0, input2.y))
+		if dir2.length() < 0.1:
+			dir2 = -transform.basis.z
+		velocity += dir2.normalized() * 12.0
+		AudioMgr.sfx("sfx_swing", -12.0)
+
+
+func _swing_anim() -> void:
+	if _hand == null:
+		return
+	var tw := _hand.create_tween()
+	tw.tween_property(_hand, "rotation_degrees", Vector3(-70, 25, 0), 0.08)
+	tw.tween_property(_hand, "rotation_degrees", Vector3.ZERO, 0.18)
 
 
 func _physics_process(delta: float) -> void:
