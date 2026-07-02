@@ -23,6 +23,7 @@ var _body_mesh: MeshInstance3D
 var _body_model: Node3D = null
 var _hand: Node3D = null
 var _dodge_cd := 0
+var _mine_swing_t := 0.0
 var _net_accum := 0.0
 var _net_pos := Vector3.ZERO
 var _net_yaw := 0.0
@@ -172,25 +173,33 @@ func _swing_anim() -> void:
 	tw.tween_property(_hand, "rotation_degrees", Vector3.ZERO, 0.18)
 
 
+var _held: Node3D = null
+var _held_id := ""
+
+
 ## Swap the first-person model to whatever the hotbar has selected.
+## Tracked by reference (queue_free renames make name lookups pile up models).
 func _update_hand() -> void:
 	if _hand == null:
 		return
-	for c in _hand.get_children():
-		if c.name == "Held":
-			c.queue_free()
 	var inv: Array = Game.my_rec().get("inv", [])
 	var entry = inv[selected_slot] if selected_slot < inv.size() else null
+	var new_id: String = entry.id if entry != null else ""
+	if new_id == _held_id and (_held == null) == (new_id == ""):
+		return  # same item — nothing to do
+	_held_id = new_id
+	if _held != null:
+		_held.queue_free()
+		_held = null
 	var mdl: Node3D = ModelDb.item_model(entry) if entry != null else null
 	if mdl != null:
-		mdl.name = "Held"
 		mdl.scale = Vector3(0.45, 0.45, 0.45)
 		mdl.rotation_degrees = Vector3(-25, 10, 0)
 		_hand.add_child(mdl)
-	# Hide the placeholder blade whenever a real model is shown.
+		_held = mdl
 	for c in _hand.get_children():
 		if c is MeshInstance3D:
-			c.visible = mdl == null
+			c.visible = _held == null
 
 
 func _physics_process(delta: float) -> void:
@@ -221,9 +230,17 @@ func _local_move(delta: float) -> void:
 		if Game.voxel != null else Blocks.AIR
 	var in_kind := Blocks.fluid_kind(body_block)
 	var swimming: bool = in_kind != "" and not Blocks.is_gas(body_block)
+	var head_block: int = Game.voxel.get_block_v(Vector3i((global_position + Vector3(0, 1.5, 0)).floor())) \
+		if Game.voxel != null else Blocks.AIR
 	if swimming:
 		velocity.y -= GRAVITY * 0.25 * delta
 		velocity.y = maxf(velocity.y, -2.0)
+		# Climbing out: at the surface against a wall, Space vaults you up.
+		if Input.is_action_pressed("jump") and not locked:
+			if Blocks.fluid_kind(head_block) == "":  # head above water
+				velocity.y = 7.5 if is_on_wall() else 4.5
+			else:
+				velocity.y = 4.5
 	else:
 		velocity.y -= GRAVITY * delta
 	var dir := Vector3.ZERO
@@ -235,8 +252,6 @@ func _local_move(delta: float) -> void:
 			dir = dir.normalized()
 		if Input.is_action_just_pressed("jump") and is_on_floor():
 			velocity.y = JUMP
-		elif swimming and Input.is_action_pressed("jump"):
-			velocity.y = 3.5  # paddle upward
 	var speed := SPRINT if Input.is_action_pressed("sprint") and not locked else SPEED
 	if swimming:
 		speed *= 0.3 if in_kind == "lava" else 0.55
@@ -343,20 +358,28 @@ func _local_mine(delta: float) -> void:
 	if a.block != mining_block:
 		mining_block = a.block
 		mining_progress = 0.0
+	# Minecraft-style tool efficacy: the RIGHT tool in hand is fast, the
+	# wrong one barely beats fists. Picks quarry stone/ore; blades chop
+	# wood and plants; the tool must be the SELECTED item.
 	var rec: Dictionary = Game.players.get(pid, {})
-	var tool_speed := 0.5  # bare hands
+	var tool_speed := 0.4  # bare hands
 	var e = rec.get("inv", [null])[selected_slot] if selected_slot < rec.get("inv", []).size() else null
-	if e != null and Db.item_def(e.id).kind == "tool":
-		tool_speed = float(Db.item_def(e.id).speed)
-	else:
-		# any pick anywhere in the hotbar still helps at half rate
-		for i in range(9):
-			var h = rec.get("inv", [])[i] if i < rec.get("inv", []).size() else null
-			if h != null and Db.item_def(h.id).kind == "tool":
-				tool_speed = maxf(tool_speed, float(Db.item_def(h.id).speed) * 0.5)
+	var woody: bool = bid in [Blocks.WOOD, Blocks.IRONWOOD_LOG, Blocks.SHROOM_STALK,
+		Blocks.SHROOM_CAP, Blocks.DOOR, Blocks.VINE, Blocks.WEB,
+		Blocks.CROP_1, Blocks.CROP_2, Blocks.CROP_RIPE]
+	if e != null:
+		var edef := Db.item_def(e.id)
+		if edef.kind == "tool":
+			tool_speed = float(edef.speed) * (0.5 if woody else 1.0)
+		elif edef.kind == "weapon" and not edef.get("ranged", false):
+			tool_speed = 1.6 if woody else 0.5
 	tool_speed *= float(rec.get("passives", {}).get("mine_speed", 1.0))
 	tool_speed *= 1.0 + Db.prof_eff(rec, "mining") * 0.015
 	mining_progress += delta * tool_speed / maxf(def.hard, 0.1)
+	_mine_swing_t -= delta
+	if _mine_swing_t <= 0.0:
+		_mine_swing_t = 0.34
+		_swing_anim()
 	if mining_progress >= 1.0:
 		mining_progress = 0.0
 		Game.request_break(a.block)
@@ -463,7 +486,9 @@ func aim_prompt() -> String:
 			ename += "  (AC %d, ~%d HP)" % [node.known_ac, node.est_hp]
 		match String(node.disp if node != null else "hostile"):
 			"passive":
-				return "E — Hunt %s" % ename
+				if node != null and node.tamed:
+					return "E — Pet %s" % ename
+				return "E — Hunt %s (hold wheat to tame)" % ename
 			"neutral":
 				return "E — Talk to %s" % ename
 			_:

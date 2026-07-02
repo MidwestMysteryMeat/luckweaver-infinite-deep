@@ -61,6 +61,10 @@ func _init(main_ref, bench_mode: String) -> void:
 		var mut := UITheme.button("Mutate Spell (50g)")
 		mut.pressed.connect(_do_mutate)
 		row.add_child(mut)
+	if mode == "spell":
+		var learn := UITheme.button("Learn Class Spell (100g)")
+		learn.pressed.connect(func(): Game.request_craft("learn_spell", {}))
+		row.add_child(learn)
 	var close := UITheme.button("Close", 14)
 	close.pressed.connect(func(): main.close_top_ui())
 	row.add_child(close)

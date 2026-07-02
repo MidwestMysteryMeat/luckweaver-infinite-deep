@@ -161,6 +161,9 @@ func _record_for(pid: int, pname: String, class_id: String, chr: Dictionary) -> 
 			rec.ac_perm = 0
 		if not rec.has("injuries"):
 			rec.injuries = {}
+		if not rec.has("mana"):
+			rec.mana = 40
+			rec.max_mana = 40 + (int(rec.get("level", 1)) - 1) * 5
 		return rec
 	return _new_record(pid, pname, class_id)
 
@@ -427,28 +430,16 @@ func _new_record(pid: int, pname: String, class_id: String) -> Dictionary:
 		"skills": [], "in_enc": false, "die_hard_used": false,
 		"inv": [],
 	}
+	# Minecraft rule: you start with NOTHING. Punch stone, chop wood, forge
+	# your way up. Classes differ by stats, passives, and their signature
+	# spell — which the Rune Forge will teach for a handful of gold.
 	for i in range(INV_SIZE):
 		rec.inv.append(null)
-	rec.inv[0] = {"id": "pick_rusty", "count": 1, "meta": {}}
-	rec.inv[1] = {"id": "blade_rusty", "count": 1, "meta": {}}
-	rec.inv[2] = {"id": "wood", "count": 20, "meta": {}}
-	# Every Luckweaver gets their class's signature spell — usable in the
-	# world AND mid-combat — plus homesteading basics.
-	rec.inv[3] = {"id": "spell", "count": 1, "meta": SpellForge.class_spell(class_id)}
-	rec.inv[4] = {"id": "seeds", "count": 4, "meta": {}}
-	rec.inv[5] = {"id": "campfire", "count": 1, "meta": {}}
+	rec["mana"] = 40
+	rec["max_mana"] = 40
 	match class_id:
-		"rune_dealer":
-			rec.inv[6] = {"id": "rune_ruin", "count": 2, "meta": {}}
-			rec.inv[7] = {"id": "card_queen", "count": 2, "meta": {}}
-			rec.inv[8] = {"id": "ess_ember", "count": 2, "meta": {}}
 		"high_roller":
 			rec.passives["bounty"] = 0.15
-		"chaos_croupier":
-			rec.inv[6] = {"id": "card_joker", "count": 2, "meta": {}}
-			rec.inv[7] = {"id": "potion", "count": 1,
-				"meta": {"name": "Volatile Solvent", "rarity": Db.Rarity.UNCOMMON,
-					"effects": [{"prop": "volatile", "potency": 4}], "throwable": true}}
 		"soul_banker":
 			rec.passives["soul_strike"] = 0.5
 		"lucky_bard":
@@ -1028,15 +1019,15 @@ func sv_use(slot: int, target: Vector3) -> void:
 			else:
 				EffectExec.drink(self, pid, meta)
 		"spell":
+			# Spells are MANA-based tomes now: permanent, but every cast draws
+			# from your pool (regenerates over time, faster at campfires).
 			var meta2: Dictionary = entry.meta
-			if int(meta2.get("charges", 0)) <= 0:
-				send_to(pid, "cl_notify", ["The spell is spent."])
+			var cost: int = 6 + int(meta2.get("power", 1)) * 4
+			if int(rec.get("mana", 0)) < cost:
+				send_to(pid, "cl_notify", ["Not enough mana (%d needed)." % cost])
 				return
-			meta2.charges = int(meta2.charges) - 1
+			rec.mana = int(rec.mana) - cost
 			EffectExec.cast(self, pid, meta2, target)
-			if int(meta2.charges) <= 0:
-				rec.inv[slot] = null
-				send_to(pid, "cl_notify", ["The spell crumbles to glitter."])
 		"skill":
 			var meta3: Dictionary = entry.meta
 			for k in meta3.get("passives", {}):
@@ -1144,6 +1135,19 @@ func sv_craft(kind: String, payload: Dictionary) -> void:
 			rec.inv[s2].meta = SpellForge.mutate(rec.inv[s2].meta, rng)
 			award_prof(pid, "spellcraft", 5)
 			send_to(pid, "cl_notify", ["The spell writhes: %s" % rec.inv[s2].meta.name])
+		"learn_spell":
+			# The Rune Forge teaches your class's signature spell (mana-cast).
+			if rec.gold < 100:
+				send_to(pid, "cl_notify", ["Learning your signature spell costs 100 gold."])
+				return
+			var sig := SpellForge.class_spell(String(rec.class_id))
+			for it in rec.inv:
+				if it != null and it.id == "spell" and String(it.meta.get("name", "")) == String(sig.name):
+					send_to(pid, "cl_notify", ["You already know %s." % sig.name])
+					return
+			rec.gold -= 100
+			give_item(pid, "spell", 1, sig)
+			send_to(pid, "cl_notify", ["Learned: %s — cast it with RMB (costs mana)." % sig.name])
 		"cook":
 			var slots2: Array = payload.slots
 			if slots2.size() < 2 or slots2.size() > 3:
@@ -1891,6 +1895,8 @@ func grant_xp(pid: int, amount: int) -> void:
 		rec.level += 1
 		rec.max_hp += 10
 		rec.hp = rec.max_hp
+		rec.max_mana = int(rec.get("max_mana", 40)) + 5
+		rec.mana = rec.max_mana
 		rec.luck += 1
 		rec.skill_points = int(rec.get("skill_points", 0)) + 1
 		send_to(pid, "cl_notify", ["Level %d! +10 HP, +1 luck, +1 skill point (K to spend)." % int(rec.level)])
@@ -2256,6 +2262,7 @@ func _server_tick_camps_and_regen() -> void:
 		if p == null or int(rec.hp) <= 0:
 			continue
 		var heal := 0
+		var mana_regen := 2
 		for b in rec.buffs:
 			if b.k == "regen":
 				heal += int(b.amt)
@@ -2264,9 +2271,16 @@ func _server_tick_camps_and_regen() -> void:
 		for key in camps:
 			if p.global_position.distance_to(camps[key]) < 6.0:
 				heal += 1
+				mana_regen += 3
 				break
+		var changed := false
 		if heal > 0 and int(rec.hp) < int(rec.max_hp):
 			rec.hp = mini(int(rec.hp) + heal, int(rec.max_hp))
+			changed = true
+		if int(rec.get("mana", 0)) < int(rec.get("max_mana", 40)):
+			rec.mana = mini(int(rec.get("mana", 0)) + mana_regen, int(rec.get("max_mana", 40)))
+			changed = true
+		if changed:
 			_sync_player(pid)
 
 

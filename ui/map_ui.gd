@@ -24,7 +24,7 @@ func _init(main_ref) -> void:
 	_tex.stretch_mode = TextureRect.STRETCH_SCALE
 	_tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	root.add_child(_tex)
-	_marker_info = UITheme.label("● you   ◆ waystones   ▲ portal side", 13, UITheme.DIM)
+	_marker_info = UITheme.label("bright = open floor · dark = rock · ● you (yellow) · ◆ waystone (cyan) · ▼ portal (gold)", 13, UITheme.DIM)
 	_marker_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_marker_info)
 	var close := UITheme.button("Close (M)", 14)
@@ -40,24 +40,29 @@ func refresh() -> void:
 	var vw = Game.voxel
 	if vw == null:
 		return
-	var img := Image.create(VoxelWorld.SX, VoxelWorld.SZ, false, Image.FORMAT_RGB8)
+	var img := Image.create(VoxelWorld.SX, VoxelWorld.SZ, false, Image.FORMAT_RGBA8)
 	for x in range(VoxelWorld.SX):
 		for z in range(VoxelWorld.SZ):
-			# Top-down: first non-air block from a sensible ceiling height.
-			var col := Color(0.04, 0.03, 0.07)
+			# High contrast: solid rock is near-black, walkable floor is the
+			# bright block color — rooms and corridors pop out as light shapes.
+			var col := Color(0.06, 0.05, 0.09)
 			for y in range(14, -1, -1):
 				var id: int = vw.get_block(x, y, z)
 				if id == Blocks.AIR:
 					continue
 				var def := Blocks.get_def(id)
-				col = def.color
 				if y > 6:
-					col = col.darkened(0.55)  # high solid = wall mass
-				elif def.glow:
-					col = col.lightened(0.2)
+					col = Color(0.09, 0.08, 0.12)  # wall mass
+				else:
+					col = def.color.lightened(0.25)  # open floor
+					if def.glow:
+						col = col.lightened(0.3)
 				break
 			img.set_pixel(x, z, col)
-	# Markers.
+	# Markers: gold = portal down, cyan = waystones, yellow = you.
+	var pp: Array = Game.gen_info.get("portal_pos", [])
+	if pp.size() == 3:
+		_blot(img, int(pp[0]), int(pp[2]), Color(1.0, 0.75, 0.1))
 	for key in Game.waystones:
 		var wp: Vector3 = Game.waystones[key].pos
 		_blot(img, int(wp.x), int(wp.z), Color(0.4, 0.8, 1.0))

@@ -98,6 +98,14 @@ func _init(main_ref) -> void:
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_status)
 
+	var reset := UITheme.button("🗑 New Character (wipe progression)", 13)
+	reset.pressed.connect(func():
+		if FileAccess.file_exists(SaveMgr.CHARACTER):
+			DirAccess.remove_absolute(SaveMgr.CHARACTER)
+		_status.text = "Character wiped — next run starts fresh and empty-handed."
+		_status.add_theme_color_override("font_color", UITheme.NEON))
+	root.add_child(reset)
+
 	var how := UITheme.button("📖 How to Play", 14)
 	how.pressed.connect(func(): main._open_ui(GuideUI.new(main)))
 	root.add_child(how)

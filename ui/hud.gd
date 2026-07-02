@@ -5,6 +5,7 @@ extends Control
 
 var main
 var _hp: ProgressBar
+var _mana: ProgressBar
 var _breath: ProgressBar
 var _hp_text: Label
 var _gold: Label
@@ -40,6 +41,8 @@ func _init(main_ref) -> void:
 	stats.add_child(_luck)
 	_level = UITheme.label("", 13, UITheme.DIM)
 	stats.add_child(_level)
+	_mana = UITheme.hbar(40, 40, Color(0.35, 0.5, 0.95), 220, 10)
+	stats.add_child(_mana)
 	_breath = UITheme.hbar(20, 20, Color(0.4, 0.7, 0.95), 220, 10)
 	_breath.visible = false
 	stats.add_child(_breath)
@@ -170,6 +173,8 @@ func _refresh_stats() -> void:
 	if not inj.is_empty():
 		muts += "  |  🩸 injured: %s" % ", ".join(inj.keys())
 	_level.text = "lv %d (%d/%d xp)%s" % [rec.level, rec.xp, Db.xp_for_level(int(rec.level)), muts]
+	_mana.max_value = int(rec.get("max_mana", 40))
+	_mana.value = int(rec.get("mana", 0))
 	var breath := float(rec.get("breath", 20.0))
 	_breath.visible = breath < 19.5
 	_breath.value = breath

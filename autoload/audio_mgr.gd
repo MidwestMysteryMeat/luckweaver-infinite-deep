@@ -46,8 +46,8 @@ var _sfx_offset := 0.0
 
 
 func apply_settings() -> void:
-	_music.volume_db = -10.0 + float(SaveMgr.settings.vol_music)
-	_amb.volume_db = -14.0 + float(SaveMgr.settings.vol_music)
+	_music.volume_db = -18.0 + float(SaveMgr.settings.vol_music)
+	_amb.volume_db = -20.0 + float(SaveMgr.settings.vol_music)
 	_sfx_offset = float(SaveMgr.settings.vol_sfx)
 
 
@@ -108,7 +108,10 @@ func _on_floor(fnum: int) -> void:
 		play_music("music_town")
 		play_amb("amb_delve")
 		return
-	play_music("music_boss" if fnum % 5 == 0 else "music_town")
+	# Rotate tracks by depth so the loop doesn't wear a groove.
+	var track := "music_boss" if fnum % 5 == 0 else \
+		("music_deep" if fnum % 2 == 0 else "music_town")
+	play_music(track)
 	var amb_map := {"delve": "amb_delve", "caverns": "amb_caverns",
 		"lakes": "amb_lakes", "molten": "amb_molten", "fungal": "amb_caverns",
 		"crypt": "amb_delve", "frozen": "amb_caverns"}

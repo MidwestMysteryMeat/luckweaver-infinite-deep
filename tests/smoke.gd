@@ -49,7 +49,9 @@ func _run_test(main) -> void:
 	_check(Game.loot_rule == "shared_gold", "loot rule set from lobby")
 	var p = Game.world.get_player(1)
 	_check(p != null, "player spawned")
-	_check(_find_slot("spell") >= 0, "class signature spell in satchel")
+	_check(_count_item("pick_rusty") == 0 and _find_slot("spell") == -1,
+		"Minecraft rule: you start empty-handed")
+	_check(int(Game.my_rec().get("mana", 0)) > 0, "mana pool initialized")
 	_check(not Game.camps.is_empty(), "town campfire discovered as a camp")
 
 	print("[smoke] mining and placing")
@@ -168,6 +170,7 @@ func _run_test(main) -> void:
 
 	print("[smoke] blacksmithing: forge, improve, skill XP")
 	Game.give_item(1, "stone", 3, {})
+	Game.give_item(1, "wood", 2, {})  # empty-handed start: bring your own mats
 	Game.give_item(1, "gold_dust", 3, {})
 	var blades_before := _count_item("blade_rusty")
 	Game.request_craft("smith", {"recipe": "blade_rusty"})
@@ -175,8 +178,11 @@ func _run_test(main) -> void:
 	_check(int(Game.my_rec().prof.smithing.xp) > 0 or int(Game.my_rec().prof.smithing.lvl) > 1,
 		"smithing gained use-XP")
 	var bslot := _find_slot("blade_rusty")
-	Game.request_craft("improve", {"slot": bslot})
-	_check(int(Game.my_rec().inv[bslot].meta.get("quality", 0)) == 1, "gear improved to Fine quality")
+	if bslot >= 0:
+		Game.request_craft("improve", {"slot": bslot})
+		_check(int(Game.my_rec().inv[bslot].meta.get("quality", 0)) == 1, "gear improved to Fine quality")
+	else:
+		_check(false, "no blade to improve")
 
 	print("[smoke] enchanting: Flamebrand blade")
 	Game.give_item(1, "ess_ember", 2, {})

@@ -16,7 +16,7 @@ static func cast(g, pid: int, meta: Dictionary, target: Vector3) -> void:
 			g._apply_edit({"t": "sphere", "p": p, "r": r, "b": Blocks.AIR})
 			_damage_enemies_near(g, target, r + 1.0, power * 12,
 				"fire" if meta.get("element", "") == "ember" else "physical",
-				"burn" if meta.get("element", "") == "ember" else "", 2)
+				"burn" if meta.get("element", "") == "ember" else "", 2, pid)
 			g.rpc("cl_notify", "%s detonates %s!" % [g.players[pid].name, meta.name])
 			if meta.get("loot_rain", false):
 				var rng := RandomNumberGenerator.new()
@@ -48,7 +48,7 @@ static func cast(g, pid: int, meta: Dictionary, target: Vector3) -> void:
 			g._apply_edit({"t": "column", "p": p, "h": 3 + power * 2, "b": Blocks.VINE})
 		"lava_burst":
 			g._apply_edit({"t": "sphere", "p": p, "r": 1.0 + power * 0.4, "b": Blocks.LAVA})
-			_damage_enemies_near(g, target, 2.5 + power, power * 8, "fire", "burn", 3)
+			_damage_enemies_near(g, target, 2.5 + power, power * 8, "fire", "burn", 3, pid)
 		"teleport":
 			# Clear headroom, then blink.
 			g._apply_edit({"t": "set", "p": [p[0], p[1] + 1, p[2]], "b": Blocks.AIR})
@@ -211,7 +211,13 @@ static func cast(g, pid: int, meta: Dictionary, target: Vector3) -> void:
 ## Area damage honoring resist/weak, optional status infliction, and the
 ## friendly-fire lobby setting (allies caught in the blast take half).
 static func _damage_enemies_near(g, at: Vector3, radius: float, dmg: int,
-		tag := "physical", status := "", turns := 0) -> void:
+		tag := "physical", status := "", turns := 0, caster := -1) -> void:
+	# Your own blast doesn't care whose fingers lit it: the caster always
+	# takes half if caught in the radius (allies only with friendly fire on).
+	if caster >= 0:
+		var cn = g.world.get_player(caster)
+		if cn != null and cn.global_position.distance_to(at) <= radius:
+			g.hurt_player(caster, maxi(1, dmg / 2), "your own blast")
 	for eid in g.enemies:
 		var e: Dictionary = g.enemies[eid]
 		if not e.alive or e.in_combat or Vector3(e.pos).distance_to(at) > radius:
@@ -288,7 +294,7 @@ static func throw_potion(g, pid: int, meta: Dictionary, target: Vector3) -> void
 				# Potent solvents leave live acid that keeps flowing and eating.
 				if pot >= 3:
 					g._apply_edit({"t": "set", "p": p, "b": Blocks.ACID})
-				_damage_enemies_near(g, target, r + 1.0, pot * 8)
+				_damage_enemies_near(g, target, r + 1.0, pot * 8, "poison", "poison", 2, pid)
 				g.rpc("cl_notify", "Glass shatters — the walls dissolve!")
 			"smoke":
 				g.spawn_gas_cloud(target, 1.5 + pot * 0.4, Blocks.SMOKE_3, true)
