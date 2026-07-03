@@ -127,7 +127,25 @@ func _run_test(main) -> void:
 	p.teleport_to(Vector3(float(sx) + 0.5, float(sy), float(sz) + 0.5))
 
 	print("[smoke] mining, placing, tool rules")
+	# Biome terrain slopes and floods — probe the spawn ring for a solid,
+	# breakable ground block that drops a placeable item instead of assuming
+	# the old flat-world (+2, -1) offset is one.
 	var bp := Vector3i(sx + 2, sy - 1, sz)
+	var found_ground := false
+	for dxz: Array in [[2, 0], [0, 2], [-2, 0], [0, -2], [2, 2], [-2, -2], [3, 0], [0, 3]]:
+		for dy: int in [-1, -2, 0, -3]:
+			var cand := Vector3i(sx + int(dxz[0]), sy + dy, sz + int(dxz[1]))
+			var cid: int = Game.voxel.get_block_v(cand)
+			if cid == Blocks.AIR or not Blocks.is_breakable(cid):
+				continue
+			var cdrop := String(Blocks.get_def(cid).get("drop", ""))
+			if cdrop != "" and String(Db.item_def(cdrop).get("kind", "")) == "block":
+				bp = cand
+				found_ground = true
+				break
+		if found_ground:
+			break
+	_check(found_ground, "solid ground near spawn to mine")
 	Game.request_break(bp)
 	_check(Game.voxel.get_block_v(bp) == Blocks.AIR, "block broken + logged")
 	var mined_slot := -1  # place back whatever the ground dropped

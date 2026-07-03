@@ -37,11 +37,29 @@ func _ready() -> void:
 	_check(Game.world.players_node.get_child_count() == 2, "I can see the host's player")
 	_check(Game.players.size() == 2, "both player records synced")
 
-	# Server-validated edit, replicated back to us.
+	# Server-validated edit, replicated back to us. Biome terrain slopes and
+	# floods, so probe around the spawn point for a solid, breakable block
+	# with a placeable drop instead of assuming the block underfoot is one.
 	var p = Game.world.get_player(me)
-	var bp := Vector3i(int(p.global_position.x), int(p.global_position.y) - 1, int(p.global_position.z))
-	var before: int = Game.voxel.get_block_v(bp)
-	_check(before != Blocks.AIR, "solid block under my spawn")
+	var px := int(p.global_position.x)
+	var py := int(p.global_position.y)
+	var pz := int(p.global_position.z)
+	var bp := Vector3i(px, py - 1, pz)
+	var found_ground := false
+	for dxz: Array in [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [2, 0], [0, 2], [2, 2]]:
+		for dy: int in [-1, -2, -3, 0]:
+			var cand := Vector3i(px + int(dxz[0]), py + dy, pz + int(dxz[1]))
+			var cid: int = Game.voxel.get_block_v(cand)
+			if cid == Blocks.AIR or not Blocks.is_breakable(cid):
+				continue
+			var cdrop := String(Blocks.get_def(cid).get("drop", ""))
+			if cdrop != "" and String(Db.item_def(cdrop).get("kind", "")) == "block":
+				bp = cand
+				found_ground = true
+				break
+		if found_ground:
+			break
+	_check(found_ground, "solid block near my spawn")
 	Game.request_break(bp)
 	await get_tree().create_timer(1.5).timeout
 	_check(Game.voxel.get_block_v(bp) == Blocks.AIR, "my edit validated by host and replicated back")
