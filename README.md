@@ -100,3 +100,10 @@ server API in `autoload/game.gd`.
 
 Solo → Lucky Bard → mine the glowing herb blocks in town's garden → brew Luckroot + Gilded
 Moss at the cauldron (Luck potion) → drink it → descend → pick a Dust Grifter and go all-in.
+
+## Audio licensing
+
+This repo contains **no audio**. The `audio_game/` music/SFX set is curated
+from purchased packs licensed to the project owner only and is stripped from
+version control (see `audio_game/ASSETS_PLACEHOLDER.md`). `audio_mgr.gd`
+tolerates missing files; fresh clones run silent.

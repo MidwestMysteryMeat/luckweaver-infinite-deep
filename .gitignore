@@ -12,3 +12,11 @@ Thumbs.db
 
 # Audio: 6+ GB of raw assets — keep out of git until curated + wired up
 audio/
+
+# --- Licensed audio: stripped from the repo (owner-licensed packs) ---
+# See audio_game/ASSETS_PLACEHOLDER.md. Files live only on the dev machine.
+*.ogg
+*.wav
+*.mp3
+*.flac
+*.m4a

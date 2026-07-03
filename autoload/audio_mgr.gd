@@ -1,3 +1,6 @@
+# NOTE: the audio files under audio_game/ are NOT in the repo — owner-licensed
+# packs stripped from version control (see audio_game/ASSETS_PLACEHOLDER.md).
+# All loads below must tolerate missing files (fresh clones run silent).
 extends Node
 ## AudioMgr — music, biome ambience, and SFX. Purely client-side: it reacts to
 ## the same replicated events/state everything else renders from.
