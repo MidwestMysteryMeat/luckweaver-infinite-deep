@@ -107,3 +107,9 @@ This repo contains **no audio**. The `audio_game/` music/SFX set is curated
 from purchased packs licensed to the project owner only and is stripped from
 version control (see `audio_game/ASSETS_PLACEHOLDER.md`). `audio_mgr.gd`
 tolerates missing files; fresh clones run silent.
+
+---
+
+<sub>Support development — <a href="https://ko-fi.com/midwestmysterymeat">Ko-fi</a></sub>
+
+<img src=".github/donation-qrcode.png" width="120" alt="Donation QR code">
