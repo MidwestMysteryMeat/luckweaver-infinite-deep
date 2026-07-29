@@ -88,12 +88,18 @@ Steam is **optional at runtime** — the code detects it and falls back to LAN/s
 godot --headless --path . res://tests/smoke.tscn        # prints SMOKE PASS, exit 0
 
 # Real two-process ENet co-op: join, spawn barrier, replicated edits, chat
-# (start the host, wait ~5s, start the client in a second terminal)
+# The runner starts both processes, enforces a timeout, and checks both exits.
+.\tests\run_mp.ps1 -GodotPath C:\path\to\godot.exe
+
+# Or start them manually: host first, then client in a second terminal.
 godot --headless --path . res://tests/mp_host.tscn
-godot --headless --path . res://tests/mp_client.tscn    # prints MP CLIENT PASS
+godot --headless --path . res://tests/mp_client.tscn
+
+# Distant glowing fluids stay on bounded lighting repairs (performance regression).
+godot --headless --path . res://tests/fluid_light_regression.tscn
 ```
 
-Both suites pass on Godot 4.6.2 as shipped. They double as living documentation of the
+All three suites pass on Godot 4.6.2 as shipped. They double as living documentation of the
 server API in `autoload/game.gd`.
 
 ## Suggested first play

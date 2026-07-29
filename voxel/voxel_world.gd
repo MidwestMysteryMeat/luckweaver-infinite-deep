@@ -14,6 +14,10 @@ const CH := 16
 const SECTIONS := H / 16          # vertical mesh sections per column
 const STREAM_R := 3               # columns loaded around each player
 const LIGHT_REPAIR_R := 14
+const FLUID_LIGHT_BUCKET := 8
+const FLUID_LIGHT_BUCKET_HALF := 4
+const FLUID_LIGHT_REPAIR_R := FLUID_LIGHT_BUCKET_HALF + 1
+const FLUID_STEP_BUDGET := 256
 
 const PROTECTED := [Blocks.BEDROCK, Blocks.CHEST, Blocks.BENCH_SPELL,
 	Blocks.BENCH_ALCH, Blocks.BENCH_SKILL, Blocks.BENCH_SHOP, Blocks.PORTAL,
@@ -64,13 +68,47 @@ func ensure_column(ck: Vector2i) -> Dictionary:
 	light.resize(16 * H * 16)
 	var c := {"data": data, "light": light, "lit": false}
 	columns[ck] = c
-	# Wake any generated fluids (lakes settle after one step and sleep).
+	# Wake only generated fluids that can actually move/react. Registering every
+	# interior ocean and lava-lake source made the first server fluid tick scan
+	# tens of thousands of permanently stable cells in one blocking frame.
 	var bx := ck.x * 16
 	var bz := ck.y * 16
 	for i in range(data.size()):
-		if Blocks.fluid_kind(data[i]) != "":
-			fluid_cells[Vector3i(bx + (i % 16), i / 256, bz + ((i / 16) % 16))] = true
+		var id: int = data[i]
+		if Blocks.fluid_kind(id) != "" and _generated_fluid_needs_wake(data, i, id):
+			fluid_cells[Vector3i(
+				bx + (i % 16),
+				int(i / 256),
+				bz + (int(i / 16) % 16))] = true
 	return c
+
+
+func _generated_fluid_needs_wake(data: PackedByteArray, i: int, id: int) -> bool:
+	var kind := Blocks.fluid_kind(id)
+	var level := Blocks.fluid_level(id)
+	if level < Blocks.fluid_max(kind):
+		return true
+	var lx := i % 16
+	var lz := int(i / 16) % 16
+	var y := int(i / 256)
+	if y > 0 and data[i - 256] == Blocks.AIR:
+		return true
+	for d in HORIZ:
+		var nx: int = lx + d.x
+		var nz: int = lz + d.z
+		# Reconcile column seams once the neighboring column is generated.
+		if nx < 0 or nx >= 16 or nz < 0 or nz >= 16:
+			return true
+		var neighbor: int = data[(y * 16 + nz) * 16 + nx]
+		if neighbor == Blocks.AIR:
+			return true
+		var neighbor_kind := Blocks.fluid_kind(neighbor)
+		if (kind == "lava" and neighbor_kind == "water") \
+				or (kind == "water" and neighbor_kind == "lava"):
+			return true
+		if kind == "acid" and neighbor in Blocks.DISSOLVES:
+			return true
+	return false
 
 
 func get_block(x: int, y: int, z: int) -> int:
@@ -476,9 +514,15 @@ func fluid_step() -> void:
 	_fluid_steps += 1
 	var cells := fluid_cells.keys()
 	cells.sort()
-	var glow_touched := false
-	var bounds_mn := Vector3i(1 << 30, 1 << 30, 1 << 30)
-	var bounds_mx := Vector3i(-(1 << 30), -(1 << 30), -(1 << 30))
+	# The streamed world can wake thousands of edge/source cells at once. Keep
+	# each deterministic network op bounded so one fluid beat cannot monopolize
+	# the main thread; remaining cells stay awake for later beats.
+	if cells.size() > FLUID_STEP_BUDGET:
+		cells.resize(FLUID_STEP_BUDGET)
+	# Group changed glowing fluids into small spatial buckets. A single bounding
+	# box across unrelated lava cells can span the whole streamed world and make
+	# repair_light scan millions of empty cells in one frame.
+	var light_buckets := {}
 	for c in cells:
 		var id := get_block(c.x, c.y, c.z)
 		var kind := Blocks.fluid_kind(id)
@@ -494,15 +538,21 @@ func fluid_step() -> void:
 			changed = _step_liquid(c.x, c.y, c.z, id, kind)
 		if changed:
 			if Blocks.get_def(id).glow:
-				glow_touched = true
-			bounds_mn = Vector3i(mini(bounds_mn.x, c.x), mini(bounds_mn.y, c.y), mini(bounds_mn.z, c.z))
-			bounds_mx = Vector3i(maxi(bounds_mx.x, c.x), maxi(bounds_mx.y, c.y), maxi(bounds_mx.z, c.z))
+				var bucket := Vector3i(
+					floori(float(c.x) / FLUID_LIGHT_BUCKET),
+					floori(float(c.y) / FLUID_LIGHT_BUCKET),
+					floori(float(c.z) / FLUID_LIGHT_BUCKET))
+				light_buckets[bucket] = true
 		else:
 			fluid_cells.erase(c)
-	if glow_touched and bounds_mx.x > -(1 << 29):
-		var c2 := (bounds_mn + bounds_mx) / 2
-		repair_light(c2, maxi(bounds_mx.x - bounds_mn.x,
-			maxi(bounds_mx.y - bounds_mn.y, bounds_mx.z - bounds_mn.z)) / 2)
+	var buckets := light_buckets.keys()
+	buckets.sort()
+	for bucket in buckets:
+		var center: Vector3i = bucket * FLUID_LIGHT_BUCKET + Vector3i(
+			FLUID_LIGHT_BUCKET_HALF, FLUID_LIGHT_BUCKET_HALF, FLUID_LIGHT_BUCKET_HALF)
+		# Include the one-cell flow frontier just outside the changed cell's
+		# bucket so light follows lava crossing a bucket boundary.
+		repair_light(center, FLUID_LIGHT_REPAIR_R)
 
 
 func _step_gas(x: int, y: int, z: int, id: int) -> bool:

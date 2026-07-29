@@ -161,6 +161,9 @@ func _run_test(main) -> void:
 
 	print("[smoke] doors, locks, magic breach")
 	var dp := Vector3i(sx + 2, sy, sz + 2)
+	# Spawn terrain varies with the run seed; make the interaction cell
+	# deterministic instead of assuming this offset always starts as air.
+	Game._apply_edit({"t": "set", "p": [dp.x, dp.y, dp.z], "b": Blocks.AIR})
 	Game.give_item(1, "door", 1, {})
 	Game.give_item(1, "golden_key", 1, {})
 	Game.request_place(dp, _find_slot("door"))
@@ -174,12 +177,23 @@ func _run_test(main) -> void:
 	_check(Game.voxel.get_block_v(dp) == Blocks.AIR, "spells breach locked doors")
 
 	print("[smoke] lighting: glowstone + skylight repair")
-	var lp := Vector3i(sx - 4, sy + 1, sz - 4)
-	var light_pre: int = Game.voxel.light_at(lp.x, lp.y + 1, lp.z)
+	var lp := Vector3i(sx - 4, maxi(sy - 3, 2), sz - 4)
+	var light_neighbor := lp + Vector3i(1, 0, 0)
+	# Build a tiny roofed cavity so the assertion is independent of randomly
+	# generated leaves/terrain and measures block light rather than skylight.
+	Game._apply_edit({"t": "set", "p": [lp.x, lp.y + 1, lp.z], "b": Blocks.STONE})
+	Game._apply_edit({"t": "set",
+		"p": [light_neighbor.x, light_neighbor.y + 1, light_neighbor.z], "b": Blocks.STONE})
+	Game._apply_edit({"t": "set", "p": [lp.x, lp.y, lp.z], "b": Blocks.AIR})
+	Game._apply_edit({"t": "set", "p": [light_neighbor.x, light_neighbor.y, light_neighbor.z],
+		"b": Blocks.AIR})
+	var light_pre: int = Game.voxel.light_at(
+		light_neighbor.x, light_neighbor.y, light_neighbor.z)
 	Game._apply_edit({"t": "set", "p": [lp.x, lp.y, lp.z], "b": Blocks.GLOWSTONE})
-	_check(Game.voxel.light_at(lp.x, lp.y + 1, lp.z) >= 14, "glowstone lights neighbors")
+	_check(Game.voxel.light_at(light_neighbor.x, light_neighbor.y, light_neighbor.z) >= 14,
+		"glowstone lights neighbors")
 	Game._apply_edit({"t": "set", "p": [lp.x, lp.y, lp.z], "b": 0})
-	_check(Game.voxel.light_at(lp.x, lp.y + 1, lp.z) >= light_pre - 1,
+	_check(Game.voxel.light_at(light_neighbor.x, light_neighbor.y, light_neighbor.z) >= light_pre - 1,
 		"light repaired after the glowstone is mined")
 
 	print("[smoke] farming on the town plot")
@@ -205,6 +219,11 @@ func _run_test(main) -> void:
 	_check(Game.my_rec().buffs.size() > pre_buffs, "feast buffs applied")
 
 	print("[smoke] fluids: pour, fuse, dissolve (controlled basin in open air)")
+	# Generated oceans/lava can leave a large deterministic work queue. Put that
+	# queue to sleep while this focused basin test runs so its cells are not
+	# delayed behind unrelated streamed terrain, then restore it afterward.
+	var sleeping_fluids := Game.voxel.fluid_cells.duplicate()
+	Game.voxel.fluid_cells.clear()
 	var fy := sy + 28  # high platform: no trees, ponds, or slopes interfering
 	Game._apply_edit({"t": "box", "p": [sx + 4, fy - 1, sz + 4], "q": [sx + 14, fy - 1, sz + 9], "b": Blocks.STONE})
 	Game._apply_edit({"t": "box", "p": [sx + 4, fy, sz + 4], "q": [sx + 14, fy + 3, sz + 9], "b": Blocks.AIR})
@@ -225,6 +244,8 @@ func _run_test(main) -> void:
 				if Game.voxel.get_block(lavap.x + dx, lavap.y + dy, lavap.z) == Blocks.OBSIDIAN:
 					made_obsidian = true
 	_check(made_obsidian, "lava + water fuses into obsidian")
+	for cell in sleeping_fluids:
+		Game.voxel.fluid_cells[cell] = true
 
 	print("[smoke] craft chain: spell (mana), potion, skill merge, smith, enchant")
 	Game.give_item(1, "rune_ruin", 1, {})
