@@ -1,7 +1,11 @@
 extends Node
-## Regression for fluid lighting repairs spanning unrelated lava cells.
-## Two changed sources thousands of blocks apart must trigger local repairs,
-## not one world-sized bounding-box scan.
+## Regressions that keep fluid_step()'s cost proportional to actual fluid
+## activity rather than to world size:
+##   1. Two changed lava sources thousands of blocks apart must trigger local
+##      light repairs, not one world-sized bounding-box scan.
+##   2. Generating terrain must queue no fluid work at all — generated oceans
+##      and lava lakes are already in equilibrium.
+## Prints "FLUID LIGHT PASS" and exits 0.
 
 
 func _ready() -> void:
@@ -39,16 +43,32 @@ func _ready() -> void:
 		passed = false
 		printerr("FLUID LIGHT FAIL: local repairs took %dms" % elapsed)
 
-	# A large streamed queue must be split across deterministic beats instead
-	# of monopolizing one frame. Out-of-range cells read as air and are erased.
-	var budget_world := VoxelWorld.new()
-	add_child(budget_world)
-	for x in range(VoxelWorld.FLUID_STEP_BUDGET + 1):
-		budget_world.fluid_cells[Vector3i(x, VoxelWorld.H, 0)] = true
-	budget_world.fluid_step()
-	if budget_world.fluid_cells.size() != 1:
+	# Generating terrain must not queue any fluid work. WorldGen places oceans
+	# and lava lakes in equilibrium, so waking them only made every fluid beat
+	# scan tens of thousands of permanently stable cells — and each edge cell's
+	# neighbour lookup generated further columns, which queued yet more cells.
+	# Disturbances arrive through set_block(), which wakes what it touches.
+	var gen_world := VoxelWorld.new()
+	gen_world.world_seed = 424242
+	add_child(gen_world)
+	var generated_fluid := false
+	for cx in range(-8, 9):
+		for cz in range(-8, 9):
+			var col := gen_world.ensure_column(Vector2i(cx, cz))
+			if generated_fluid:
+				continue
+			var data: PackedByteArray = col.data
+			for i in range(0, data.size(), 16):
+				if Blocks.fluid_kind(data[i]) != "":
+					generated_fluid = true
+					break
+	if not generated_fluid:
 		passed = false
-		printerr("FLUID LIGHT FAIL: fluid step exceeded its work budget")
+		printerr("FLUID LIGHT FAIL: sample generated no fluid, so the check below is vacuous")
+	elif not gen_world.fluid_cells.is_empty():
+		passed = false
+		printerr("FLUID LIGHT FAIL: generating terrain queued %d settled fluid cells"
+			% gen_world.fluid_cells.size())
 
 	if passed:
 		print("FLUID LIGHT PASS (%dms)" % elapsed)
