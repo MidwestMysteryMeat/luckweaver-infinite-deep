@@ -84,7 +84,12 @@ Steam is **optional at runtime** — the code detects it and falls back to LAN/s
 ## Automated tests (headless, no display needed)
 
 ```powershell
-# Full solo gameplay loop: mine → craft → cast → brew → merge → descend → gamble → save
+# Recommended: imports a fresh clone, then runs solo, fluid/light, and real
+# two-process ENet multiplayer suites.
+.\tests\run_headless.ps1 -GodotPath C:\path\to\godot.exe
+
+# Individual suite: import once first so Godot builds its ignored class cache.
+godot --headless --path . --import
 godot --headless --path . res://tests/smoke.tscn        # prints SMOKE PASS, exit 0
 
 # Real two-process ENet co-op: join, spawn barrier, replicated edits, chat
@@ -99,8 +104,10 @@ godot --headless --path . res://tests/mp_client.tscn
 godot --headless --path . res://tests/fluid_light_regression.tscn
 ```
 
-All three suites pass on Godot 4.6.2 as shipped. They double as living documentation of the
-server API in `autoload/game.gd`.
+All three suites pass on Godot 4.6.2 as shipped. The unified runner is safe on
+a fresh clone: it performs the required import before launching any scene.
+The suites double as living documentation of the server API in
+`autoload/game.gd`.
 
 ## Suggested first play
 
