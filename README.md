@@ -114,6 +114,12 @@ from purchased packs licensed to the project owner only and is stripped from
 version control (see `audio_game/ASSETS_PLACEHOLDER.md`). `audio_mgr.gd`
 tolerates missing files; fresh clones run silent.
 
+## License
+
+Licensed under the **[Apache License 2.0](LICENSE)** — free to use, modify, fork and build on, commercially or not.
+
+**Credit is required.** Apache-2.0 §4(c)–(d) obliges you to keep the copyright notice and to reproduce [`NOTICE`](NOTICE) in anything you distribute, including binaries and hosted builds. Credit it as `luckweaver-infinite-deep by MysteryMeat` (https://github.com/MidwestMysteryMeat/luckweaver-infinite-deep) in your credits screen, About box, or docs. The project name and the MysteryMeat name are not licensed for endorsement or promotion (§6).
+
 ---
 
 <sub>Support development — <a href="https://ko-fi.com/midwestmysterymeat">Ko-fi</a></sub>
