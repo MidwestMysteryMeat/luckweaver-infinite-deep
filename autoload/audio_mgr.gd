@@ -128,19 +128,30 @@ func _check_depth(delta: float) -> void:
 	if p == null:
 		return
 	var band := Db.band_at(p.global_position.y)
+	var amb := ""
 	if band == 0:
 		play_music("music_town")
-		play_amb("amb_delve")
+		amb = "amb_delve"
 	elif band <= 2:
 		play_music("music_deep")
-		play_amb("amb_caverns")
+		amb = "amb_caverns"
 	else:
 		play_music("music_boss")
-		play_amb("amb_molten" if band >= 4 else "amb_lakes")
+		amb = "amb_molten" if band >= 4 else "amb_lakes"
+
+	# A named biome overrides the depth band, but ONLY when it is one we have a
+	# track for. This used to call play_amb a second time unconditionally with
+	# gen_info.biome, which has only held "spawn" since the infinite-world
+	# rewrite — so the lookup always fell back to amb_delve, the depth
+	# ambiences never played, and the two calls restarted the stream twice
+	# every three seconds.
 	var amb_map := {"delve": "amb_delve", "caverns": "amb_caverns",
 		"lakes": "amb_lakes", "molten": "amb_molten", "fungal": "amb_caverns",
 		"crypt": "amb_delve", "frozen": "amb_caverns"}
-	play_amb(amb_map.get(String(Game.gen_info.get("biome", "delve")), "amb_delve"))
+	var biome := String(Game.gen_info.get("biome", ""))
+	if amb_map.has(biome):
+		amb = amb_map[biome]
+	play_amb(amb)
 
 
 ## Light keyword routing for one-line feedback sounds.

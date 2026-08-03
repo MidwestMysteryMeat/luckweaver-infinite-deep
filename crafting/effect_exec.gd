@@ -124,7 +124,7 @@ static func cast(g, pid: int, meta: Dictionary, target: Vector3) -> void:
 				g._apply_edit({"t": "column", "p": [p[0] + perp[0] * i, p[1], p[2] + perp[2] * i],
 					"h": 2, "b": wall_block})
 			if wall_block == Blocks.LAVA:
-				_damage_enemies_near(g, target, 2.0 + half, power * 6, "fire", "burn", 2)
+				_damage_enemies_near(g, target, 2.0 + half, power * 6, "fire", "burn", 2, pid)
 			g.send_to(pid, "cl_notify", ["A wall of %s roars up from the ground!" % Blocks.get_def(wall_block).name.to_lower()])
 		"invisibility":
 			g.players[pid].buffs.append({"k": "invis", "amt": 1,
@@ -235,7 +235,10 @@ static func _damage_enemies_near(g, at: Vector3, radius: float, dmg: int,
 			e.status[status] = maxi(int(e.status.get(status, 0)), turns)
 		e.hp -= final
 		if e.hp <= 0:
-			g.enemy_defeated(eid, 1)
+			# Credit whoever cast it. This was hardcoded to peer 1, so in
+			# multiplayer the HOST collected the XP, proficiency, kill-quest
+			# progress, gold and loot for every client's blast kill.
+			g.enemy_defeated(eid, caster if caster >= 0 else 1)
 		else:
 			g.rpc("cl_notify", "%s reels from the blast!" % e.get("name", "Something"))
 	if g.friendly_fire:
@@ -301,7 +304,7 @@ static func throw_potion(g, pid: int, meta: Dictionary, target: Vector3) -> void
 				g.rpc("cl_notify", "A smoke bomb blooms — eyes lose you in the haze.")
 			"toxic":
 				g.spawn_gas_cloud(target, 1.0 + pot * 0.4, Blocks.GAS_POISON_2)
-				_damage_enemies_near(g, target, 2.0 + pot * 0.4, pot * 4)
+				_damage_enemies_near(g, target, 2.0 + pot * 0.4, pot * 4, "physical", "", 0, pid)
 				g.rpc("cl_notify", "Green vapor hisses out of the shattered flask.")
 			_:
 				# Benign effects still work on yourself if thrown at your feet.

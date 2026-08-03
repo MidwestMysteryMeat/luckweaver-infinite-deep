@@ -598,8 +598,10 @@ func roll_loot(rng: RandomNumberGenerator, fnum: int, luck: int, bonus := 0.0) -
 			out.append({"id": ess[rng.randi_range(0, ess.size() - 1)], "count": 1, "meta": {}})
 		elif r < 0.47:
 			var util := ["golden_key", "campfire", "seeds", "door"]
-			out.append({"id": util[rng.randi_range(0, util.size() - 1)],
-				"count": 3 if util[0] == "seeds" else 1, "meta": {}})
+			# Test the id actually PICKED. This read util[0], the constant
+			# "golden_key", so the 3-seed bundle always dropped as a single seed.
+			var util_id: String = util[rng.randi_range(0, util.size() - 1)]
+			out.append({"id": util_id, "count": 3 if util_id == "seeds" else 1, "meta": {}})
 		elif r < 0.52 and fnum >= 2:
 			var gear := ["blade_rusty", "maul_bone", "blade_gilded", "cap_hide", "armor_hide", "armor_bone"]
 			if fnum >= 6:

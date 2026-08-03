@@ -1608,12 +1608,12 @@ func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
 		match String(w.meta.get("ench", "")):
 			"ember":
 				dmg += randi_range(1, 4) * int(w.meta.get("epow", 1))
-				_enemy_status(e, "burn", 2)
+				_enemy_status(e, "burn", 2, pid)
 			"void":
 				rec.hp = mini(int(rec.hp) + 2 * int(w.meta.get("epow", 1)), int(rec.max_hp))
 			"frost":
 				if randf() < 0.12 * int(w.meta.get("epow", 1)):
-					_enemy_status(e, "sleep", 1)
+					_enemy_status(e, "sleep", 1, pid)
 			"verdant":
 				rec.hp = mini(int(rec.hp) + int(w.meta.get("epow", 1)), int(rec.max_hp))
 	# Resist / weak by damage tag.
@@ -1651,11 +1651,17 @@ func _strike(pid: int, eid: int, w: Dictionary, ranged: bool) -> void:
 		var mend := int(armor_of(rec).ench.get("verdant", 0))
 		if mend > 0:
 			rec.hp = mini(int(rec.hp) + mend * 3, int(rec.max_hp))
-		reward_gold(pid, randi_range(2, 12) + int(e.get("level", 0)) * 4)
+		# Elite gold multiplier (Gilded x3, Cursed x1.5, Ancient x2) is stored
+		# on the enemy at spawn but was only ever read by encounter.gd, which
+		# nothing reaches — so on the live kill path elites paid normal gold.
+		# Same shape as encounter.gd's payout.
+		var kill_gold := randi_range(2, 12) + int(e.get("level", 0)) * 4
+		kill_gold = int(kill_gold * float(e.get("gold_mult", 1.0)))
+		reward_gold(pid, kill_gold)
 		enemy_defeated(eid, pid)
 
 
-func _enemy_status(e: Dictionary, kind: String, turns: int) -> void:
+func _enemy_status(e: Dictionary, kind: String, turns: int, by_pid: int = -1) -> void:
 	var def: Dictionary = Db.ENEMIES[e.type]
 	if (kind == "burn" and "fire" in def.get("resist", [])) \
 			or (kind == "poison" and "poison" in def.get("resist", [])):
@@ -1663,6 +1669,10 @@ func _enemy_status(e: Dictionary, kind: String, turns: int) -> void:
 	if not e.has("status"):
 		e["status"] = {}
 	e.status[kind] = maxi(int(e.status.get(kind, 0)), turns)
+	# Remember who applied it so a kill by damage-over-time credits them
+	# rather than defaulting to the host. Latest applier wins.
+	if by_pid >= 0:
+		e["dot_by"] = by_pid
 
 
 @rpc("authority", "call_local", "reliable")
@@ -2397,7 +2407,9 @@ func _server_tick_enemy_statuses() -> void:
 		if int(st.get("sleep", 0)) > 0:
 			st.sleep = int(st.sleep) - 1
 		if int(e.hp) <= 0:
-			enemy_defeated(eid, 1)
+			# Credit whoever applied the burn/poison. This was hardcoded to
+			# peer 1, handing the host every client's damage-over-time kill.
+			enemy_defeated(eid, int(e.get("dot_by", 1)))
 
 
 var _ambush_t := 150.0
@@ -2887,6 +2899,16 @@ func reset_session() -> void:
 	enemies = {}
 	pickups = {}
 	encounters.clear()
+	# Per-run server state. Left behind, a new run inherited the previous
+	# run's chest contents (keyed by raw coordinates, so they resurface on any
+	# coordinate collision — the deterministic spawn village guarantees one)
+	# and its active quest, and the next save_now() persisted the stale
+	# chest_store as the new save's town_chests.
+	chest_store = {}
+	quests = {}
+	fishing = {}
+	last_deaths = {}
+	_crushers = []
 	world = null
 	voxel = null
 	gen_info = {}
